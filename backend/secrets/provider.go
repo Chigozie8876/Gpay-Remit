@@ -18,11 +18,24 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 )
 
 // Provider resolves a named secret to its current value.
 type Provider interface {
 	GetSecret(ctx context.Context, name string) (string, error)
+}
+
+var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+func validateSecretName(name string) error {
+	if name == "" {
+		return fmt.Errorf("secret name must not be empty")
+	}
+	if !secretNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid secret name %q: must contain only alphanumeric characters and underscores", name)
+	}
+	return nil
 }
 
 // NewProvider builds the Provider selected by the SECRETS_PROVIDER

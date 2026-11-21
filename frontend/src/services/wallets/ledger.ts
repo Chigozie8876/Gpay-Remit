@@ -1,6 +1,6 @@
 // Base Ledger service structure
 import TransportWebUSB from "@ledgerhq/hw-transport-webusb";
-import Str from "@ledgerhq/hw-app-stellar";
+import Str from "@ledgerhq/hw-app-str";
 
 export class LedgerWalletService {
   private transport: any | null = null;
