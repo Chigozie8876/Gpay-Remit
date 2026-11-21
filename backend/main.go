@@ -11,17 +11,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Gpay-Remit/gpay-remit/config"
 	"github.com/Gpay-Remit/gpay-remit/graphql"
 	"github.com/Gpay-Remit/gpay-remit/handlers"
-	"github.com/Gpay-Remit/gpay-remit/models"
 	"github.com/Gpay-Remit/gpay-remit/logger"
 	"github.com/Gpay-Remit/gpay-remit/metrics"
 	"github.com/Gpay-Remit/gpay-remit/middleware"
+	"github.com/Gpay-Remit/gpay-remit/models"
 	"github.com/Gpay-Remit/gpay-remit/services"
 	"github.com/Gpay-Remit/gpay-remit/utils"
 	"github.com/Gpay-Remit/gpay-remit/workers"
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
 )
 
 // shuttingDown signals goroutines to stop when a shutdown signal is received
@@ -41,6 +42,10 @@ func main() {
 		logger.Log.WithField("error", err).Fatal("Failed to connect to database")
 	}
 
+	if err := models.EncryptLegacyWebhookSecrets(db); err != nil {
+		logger.Log.WithField("error", err).Fatal("Failed to encrypt legacy webhook secrets")
+	}
+
 	// Initialize Redis — non-fatal: the app runs without Redis but cache and
 	// some health-check fields will be degraded.
 	if err := utils.InitRedis(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB); err != nil {
@@ -51,6 +56,7 @@ func main() {
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(cors.New(cfg.CORSConfig()))
 	router.Use(middleware.PrometheusMetrics())
 	router.Use(middleware.RequestIDMiddleware())
 	router.Use(middleware.RequestLogger())
@@ -61,17 +67,6 @@ func main() {
 
 	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
-	router.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Version, Accept-Version")
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-		c.Next()
-	})
-
 	healthHandler := handlers.NewHealthHandlerWithRedis(db, cfg, utils.RedisClient)
 	router.GET("/health", healthHandler.Health)
 	router.GET("/health/ready", healthHandler.Ready)
@@ -80,7 +75,7 @@ func main() {
 	router.GET("/api/docs", handlers.DocsUI)
 	router.GET("/api/docs/openapi.yaml", handlers.DocsSpec)
 
-		gqlServer := graphql.NewServer(db, cfg)
+	gqlServer := graphql.NewServer(db, cfg)
 	router.GET("/playground", gqlServer.PlaygroundHandler())
 	router.GET("/graphql/playground", gqlServer.PlaygroundHandler())
 	router.POST("/graphql", gqlServer.QueryHandler())
@@ -95,14 +90,17 @@ func main() {
 		api.POST("/auth/refresh", authHandler.Refresh)
 		api.POST("/auth/forgot-password", authHandler.ForgotPassword)
 		api.POST("/auth/reset-password", authHandler.ResetPassword)
+		api.POST("/auth/request-unlock", authHandler.RequestUnlock)
+		api.POST("/auth/unlock", authHandler.UnlockAccount)
 
 		api.POST("/users", authHandler.Register)
 
 		protected := api.Group("/")
-		protected.Use(middleware.JwtAuthMiddleware(cfg))
+		protected.Use(middleware.JwtAuthMiddleware(db, cfg))
 		protected.Use(middleware.AuditTrail(db))
 		{
 			protected.POST("/auth/logout", authHandler.Logout)
+			protected.POST("/auth/change-password", authHandler.ChangePassword)
 			// 2FA endpoints — pquerna/otp based TOTP
 			protected.POST("/auth/mfa/setup", authHandler.SetupMFA)
 			protected.POST("/auth/mfa/verify", authHandler.VerifyMFA)
@@ -164,7 +162,6 @@ func main() {
 			protected.GET("/webhooks/:id/deliveries", webhookHandler.GetWebhookDeliveries)
 			protected.POST("/webhooks/deliveries/:delivery_id/retry", webhookHandler.RetryWebhookDelivery)
 
-			
 			analyticsHandler := handlers.NewAnalyticsHandler(db)
 			protected.GET("/analytics/volume", middleware.RequireRole("admin"), analyticsHandler.GetVolumeMetrics)
 			protected.GET("/analytics/fees", middleware.RequireRole("admin"), analyticsHandler.GetFeeMetrics)
@@ -185,14 +182,17 @@ func main() {
 		api2.POST("/auth/refresh", authHandler.Refresh)
 		api2.POST("/auth/forgot-password", authHandler.ForgotPassword)
 		api2.POST("/auth/reset-password", authHandler.ResetPassword)
+		api2.POST("/auth/request-unlock", authHandler.RequestUnlock)
+		api2.POST("/auth/unlock", authHandler.UnlockAccount)
 
 		api2.POST("/users", authHandler.Register)
 
 		protected := api2.Group("/")
-		protected.Use(middleware.JwtAuthMiddleware(cfg))
+		protected.Use(middleware.JwtAuthMiddleware(db, cfg))
 		protected.Use(middleware.AuditTrail(db))
 		{
 			protected.POST("/auth/logout", authHandler.Logout)
+			protected.POST("/auth/change-password", authHandler.ChangePassword)
 			protected.POST("/auth/mfa/setup", authHandler.SetupMFA)
 			protected.POST("/auth/mfa/verify", authHandler.VerifyMFA)
 			protected.POST("/auth/mfa/disable", authHandler.DisableMFA)
@@ -251,7 +251,6 @@ func main() {
 			protected.GET("/webhooks/:id/deliveries", webhookHandler.GetWebhookDeliveries)
 			protected.POST("/webhooks/deliveries/:delivery_id/retry", webhookHandler.RetryWebhookDelivery)
 
-			
 			analyticsHandler := handlers.NewAnalyticsHandler(db)
 			protected.GET("/analytics/volume", middleware.RequireRole("admin"), analyticsHandler.GetVolumeMetrics)
 			protected.GET("/analytics/fees", middleware.RequireRole("admin"), analyticsHandler.GetFeeMetrics)

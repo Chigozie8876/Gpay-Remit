@@ -446,7 +446,6 @@ func (s *EmailService) SendPaymentFailedEmail(user *models.User, payment *models
 	return s.SendEmail(user.Email, subject, body.String())
 }
 
-
 // SendPasswordResetEmail sends a password reset link to the user
 func (s *EmailService) SendPasswordResetEmail(user *models.User, token string) error {
 	tmpl := `
@@ -524,6 +523,61 @@ func (s *EmailService) SendPasswordResetEmail(user *models.User, token string) e
 
 	subject := "Password Reset Request - GPay-Remit"
 	return s.SendEmail(user.Email, subject, body.String())
+}
+
+// SendAccountUnlockEmail sends a single-use link for unlocking a locked account.
+func (s *EmailService) SendAccountUnlockEmail(user *models.User, token string) error {
+	tmpl := `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #2196F3; color: white; padding: 20px; text-align: center; }
+        .content { padding: 20px; background-color: #f9f9f9; }
+        .token { background-color: #f5f5f5; padding: 15px; border-radius: 5px; font-family: monospace; word-break: break-all; margin: 15px 0; }
+        .warning { color: #f44336; font-weight: bold; margin: 15px 0; }
+        .footer { text-align: center; padding: 20px; font-size: 12px; color: #777; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Account Unlock Request</h1>
+        </div>
+        <div class="content">
+            <p>Hello {{.UserName}},</p>
+            <p>We received a request to unlock your GPay-Remit account.</p>
+            <div class="token">{{.Token}}</div>
+            <p>This token expires in <strong>1 hour</strong> and can only be used once.</p>
+            <div class="warning">
+                If you did not request this unlock, ignore this email. Your account will remain locked.
+            </div>
+        </div>
+        <div class="footer">
+            <p>This is an automated email. Please do not reply.</p>
+            <p>GPay-Remit Security Team</p>
+        </div>
+    </div>
+</body>
+</html>
+`
+
+	t, err := template.New("account_unlock").Parse(tmpl)
+	if err != nil {
+		return fmt.Errorf("failed to parse template: %w", err)
+	}
+
+	var body bytes.Buffer
+	if err := t.Execute(&body, map[string]interface{}{
+		"UserName": sanitizeEmailField(user.Name),
+		"Token":    token,
+	}); err != nil {
+		return fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	return s.SendEmail(user.Email, "Account Unlock Request - GPay-Remit", body.String())
 }
 
 // SendPaymentRequestAcceptedEmail sends notification when a payment request is accepted
