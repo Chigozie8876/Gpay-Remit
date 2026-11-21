@@ -46,3 +46,5 @@ fuzz_target!(|i: Input| {
         assert_eq!(token.balance(&id), 0);
     }
 });
+
+
