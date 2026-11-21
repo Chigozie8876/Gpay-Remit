@@ -12,6 +12,10 @@ func TLSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Set HSTS header for security
 		c.Writer.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
+		c.Writer.Header().Set("X-Frame-Options", "DENY")
+		c.Writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Writer.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 
 		// Only redirect if TLS_ENABLED is true or APP_ENV is production
 		appEnv := os.Getenv("APP_ENV")

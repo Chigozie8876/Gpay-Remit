@@ -63,6 +63,9 @@ func newAWSSecretsManagerProviderWithClient(client secretsManagerClient, cacheTT
 // GetSecret returns the current value of the named secret (by name or
 // ARN), using a cached value if one was fetched within cacheTTL.
 func (p *AWSSecretsManagerProvider) GetSecret(ctx context.Context, name string) (string, error) {
+	if err := validateSecretName(name); err != nil {
+		return "", err
+	}
 	if cached, ok := p.getCached(name); ok {
 		return cached, nil
 	}

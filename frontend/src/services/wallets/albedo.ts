@@ -1,4 +1,4 @@
-import albedo from "albedo-link";
+import albedo from "@albedo-link/intent";
 
 export class AlbedoWalletService {
   private publicKey: string | null = null;

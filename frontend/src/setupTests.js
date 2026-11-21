@@ -6,7 +6,7 @@ jest.mock("@ledgerhq/hw-transport-webusb", () => ({
   default: { create: jest.fn().mockResolvedValue({ close: jest.fn() }) },
 }));
 
-jest.mock("@ledgerhq/hw-app-stellar", () => ({
+jest.mock("@ledgerhq/hw-app-str", () => ({
   __esModule: true,
   default: jest.fn().mockImplementation(() => ({
     getPublicKey: jest.fn().mockResolvedValue({ publicKey: "GTEST..." }),
@@ -23,7 +23,7 @@ jest.mock("@stellar/freighter-api", () => ({
 }));
 
 // Mock albedo-link — opens a popup window, not available in jsdom.
-jest.mock("albedo-link", () => ({
+jest.mock("@albedo-link/intent", () => ({
   __esModule: true,
   default: {
     publicKey: jest.fn().mockResolvedValue({ pubkey: "GTEST..." }),

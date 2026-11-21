@@ -22,6 +22,9 @@ func NewEnvProvider() *EnvProvider {
 // switching a caller from os.Getenv to this provider changes nothing about
 // what counts as "missing" for a required secret).
 func (p *EnvProvider) GetSecret(_ context.Context, name string) (string, error) {
+	if err := validateSecretName(name); err != nil {
+		return "", err
+	}
 	value := os.Getenv(name)
 	if value == "" {
 		return "", fmt.Errorf("environment variable %s is required but not set", name)
