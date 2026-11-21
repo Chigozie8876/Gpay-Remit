@@ -176,11 +176,90 @@ pub enum AmlKey {
     Flag(u64),
 }
 
+/// # Authorization model (#365)
+///
+/// The hub has a single privileged role: the **admin**, whose address is
+/// written to `DataKey::Admin` exactly once by [`RemittanceHubContract::init_hub`]
+/// (which itself requires the admin's signature and rejects re-initialization).
+///
+/// Every admin-only entry point enforces two independent checks:
+///
+/// 1. **Signature** – `caller.require_auth()` proves the transaction was signed
+///    by the address passed as `caller`, so nobody can impersonate the admin.
+/// 2. **Identity** – the authenticated `caller` is compared with the admin
+///    address stored in contract storage. A validly signed call from any other
+///    address is rejected with `Unauthorized`.
+///
+/// Both checks live in [`RemittanceHubContract::require_admin`] (and
+/// [`RemittanceHubContract::check_upgrade_admin`] for the upgrade lifecycle,
+/// where `require_auth()` is performed by the `upgradeable` module) and run
+/// before any storage is read or written.
+///
+/// If the hub has not been initialized there is no admin, so every admin
+/// function fails closed (it returns an error instead of panicking or
+/// accepting the caller).
+///
+/// Admin-only functions:
+///
+/// | Function | Error on non-admin |
+/// |---|---|
+/// | `set_oracle`, `set_max_staleness`, `set_cached_rate` | `Unauthorized` (`OracleNotConfigured` if uninitialized) |
+/// | `set_fee_config` | `Unauthorized` |
+/// | `configure_aml`, `set_aml_threshold`, `set_aml_oracle`, `clear_aml_flag` | `Unauthorized` |
+/// | `set_max_batch_size` | `Unauthorized` |
+/// | `set_rate_limit_config`, `set_global_rate_limit_config`, `set_rate_limit_exemption` | `Unauthorized` |
+/// | `reset_metric` | `Unauthorized` |
+/// | `pause`, `unpause`, `upgrade`, `migrate` | `UpgradeError::Unauthorized` |
+///
+/// All other public functions are either read-only getters or user actions
+/// authorized by the participating party (sender, recipient, etc.).
 #[contract]
 pub struct RemittanceHubContract;
 
 #[contractimpl]
 impl RemittanceHubContract {
+    /// Enforce that `caller` signed the invocation **and** is the stored admin.
+    ///
+    /// `not_initialized` is returned when no admin has been stored yet (the
+    /// hub was never initialized); a mismatching caller always yields
+    /// `RemittanceError::Unauthorized`.
+    fn require_admin(
+        env: &Env,
+        caller: &Address,
+        not_initialized: RemittanceError,
+    ) -> Result<(), RemittanceError> {
+        caller.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .ok_or(not_initialized)?;
+        if *caller != stored_admin {
+            return Err(RemittanceError::Unauthorized);
+        }
+        Ok(())
+    }
+
+    /// Admin identity check for the upgrade lifecycle (`pause`, `unpause`,
+    /// `upgrade`, `migrate`). The signature check (`require_auth`) is
+    /// performed by the corresponding `upgradeable` function. Fails closed
+    /// with `Unauthorized` when the hub is not initialized instead of
+    /// panicking.
+    fn check_upgrade_admin(
+        env: &Env,
+        admin: &Address,
+    ) -> Result<(), upgradeable::UpgradeError> {
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .ok_or(upgradeable::UpgradeError::Unauthorized)?;
+        if *admin != stored_admin {
+            return Err(upgradeable::UpgradeError::Unauthorized);
+        }
+        Ok(())
+    }
+
     pub fn init_hub(
         env: Env,
         admin: Address,
@@ -227,15 +306,7 @@ impl RemittanceHubContract {
         primary_oracle: Address,
         secondary_oracle: Address,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::OracleNotConfigured)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::OracleNotConfigured)?;
 
         let mut config: OracleConfig = env
             .storage()
@@ -268,15 +339,7 @@ impl RemittanceHubContract {
         caller: Address,
         max_staleness: u64,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::OracleNotConfigured)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::OracleNotConfigured)?;
 
         let mut config: OracleConfig = env
             .storage()
@@ -300,15 +363,7 @@ impl RemittanceHubContract {
         rate: i128,
         denominator: i128,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::OracleNotConfigured)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::OracleNotConfigured)?;
         if rate <= 0 || denominator <= 0 {
             return Err(RemittanceError::InvalidRate);
         }
@@ -333,15 +388,7 @@ impl RemittanceHubContract {
     }
 
     pub fn set_fee_config(env: Env, admin: Address, config: FeeConfig) -> Result<(), RemittanceError> {
-        admin.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-        if admin != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &admin, RemittanceError::Unauthorized)?;
 
         if config.percentage < 0 || config.percentage > 10000 || config.min_fee < 0 || config.max_fee < config.min_fee {
             return Err(RemittanceError::InvalidAmount);
@@ -395,16 +442,7 @@ impl RemittanceHubContract {
         oracle_address: Address,
         risk_threshold: u32,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::Unauthorized)?;
 
         let config = AmlConfig {
             admin: caller.clone(),
@@ -433,15 +471,7 @@ impl RemittanceHubContract {
         caller: Address,
         risk_threshold: u32,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::Unauthorized)?;
 
         let mut config: AmlConfig = env
             .storage()
@@ -471,15 +501,7 @@ impl RemittanceHubContract {
         caller: Address,
         oracle_address: Address,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::Unauthorized)?;
 
         let mut config: AmlConfig = env
             .storage()
@@ -513,15 +535,7 @@ impl RemittanceHubContract {
         caller: Address,
         remittance_id: u64,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::Unauthorized)?;
 
         let mut flag: AmlScreeningResult = env
             .storage()
@@ -1246,15 +1260,7 @@ impl RemittanceHubContract {
         caller: Address,
         limit: u32,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::Unauthorized)?;
         env.storage()
             .persistent()
             .set(&DataKey::MaxBatchSize, &limit);
@@ -1341,15 +1347,7 @@ impl RemittanceHubContract {
         function_type: rate_limit::FunctionType,
         config: rate_limit::RateLimitConfig,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::Unauthorized)?;
         rate_limit::set_config(&env, function_type, config);
         Ok(())
     }
@@ -1367,15 +1365,7 @@ impl RemittanceHubContract {
         function_type: rate_limit::FunctionType,
         config: rate_limit::RateLimitConfig,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::Unauthorized)?;
         rate_limit::set_global_config(&env, function_type, config);
         Ok(())
     }
@@ -1393,15 +1383,7 @@ impl RemittanceHubContract {
         address: Address,
         exempt: bool,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::Unauthorized)?;
         rate_limit::set_exemption(&env, &address, exempt);
         Ok(())
     }
@@ -1424,19 +1406,13 @@ impl RemittanceHubContract {
 
     /// Pause the contract. Admin-only.
     pub fn pause(env: Env, admin: Address) -> Result<(), upgradeable::UpgradeError> {
-        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        if admin != stored_admin {
-            return Err(upgradeable::UpgradeError::Unauthorized);
-        }
+        Self::check_upgrade_admin(&env, &admin)?;
         upgradeable::pause(&env, &admin)
     }
 
     /// Unpause the contract. Admin-only.
     pub fn unpause(env: Env, admin: Address) -> Result<(), upgradeable::UpgradeError> {
-        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        if admin != stored_admin {
-            return Err(upgradeable::UpgradeError::Unauthorized);
-        }
+        Self::check_upgrade_admin(&env, &admin)?;
         upgradeable::unpause(&env, &admin)
     }
 
@@ -1447,20 +1423,14 @@ impl RemittanceHubContract {
         admin: Address,
         new_wasm_hash: BytesN<32>,
     ) -> Result<(), upgradeable::UpgradeError> {
-        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        if admin != stored_admin {
-            return Err(upgradeable::UpgradeError::Unauthorized);
-        }
+        Self::check_upgrade_admin(&env, &admin)?;
         upgradeable::upgrade(&env, &admin, new_wasm_hash)
     }
 
     /// Finalize migration after an upgrade. Admin-only.
     /// Unpause the contract and return the new version number.
     pub fn migrate(env: Env, admin: Address) -> Result<u32, upgradeable::UpgradeError> {
-        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        if admin != stored_admin {
-            return Err(upgradeable::UpgradeError::Unauthorized);
-        }
+        Self::check_upgrade_admin(&env, &admin)?;
         upgradeable::migrate(&env, &admin)
     }
 
@@ -1489,16 +1459,7 @@ impl RemittanceHubContract {
         timestamp: u64,
         is_weekly: bool,
     ) -> Result<(), RemittanceError> {
-        caller.require_auth();
-        let stored_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(RemittanceError::Unauthorized)?;
-
-        if caller != stored_admin {
-            return Err(RemittanceError::Unauthorized);
-        }
+        Self::require_admin(&env, &caller, RemittanceError::Unauthorized)?;
 
         if is_weekly {
             let week = timestamp / (86400 * 7);
