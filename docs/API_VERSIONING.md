@@ -38,9 +38,53 @@ Accept-Version: v2
 
 If no version is specified, the API defaults to **v2** (the current version).
 
+## Versioning Policy
+
+The rules below are enforced by `backend/middleware/versioning.go`. The list of versions it accepts is `SupportedAPIVersions`.
+
+1. **Only known versions are accepted.** The supported versions are `v1` and `v2`. Any other value in the path, `X-API-Version` or `Accept-Version` gets `400 UNSUPPORTED_API_VERSION`. This includes `/api/v3/...`, `v2.1` and `latest`. An unknown version is never treated as the default.
+2. **Values are normalized.** Header values are case-insensitive, and a missing `v` is added, so `V2` and `2` both mean `v2`. A blank header counts as absent.
+3. **Every version in a request must match.** If the path and the headers name different versions, the request gets `400 UNSUPPORTED_API_VERSION`. For example, `/api/v1/...` with `X-API-Version: v2` is rejected. Otherwise the request would go to a v1 handler while reporting v2.
+4. **Deprecated versions keep working until their sunset date.** Every response to a deprecated version includes the standard deprecation headers listed below.
+5. **New versions are added by updating `SupportedAPIVersions`.** A version is deprecated by adding its deprecation and sunset dates to the `deprecations` table in the middleware. No other code needs to change.
+
+### Unsupported or conflicting version
+
+```http
+GET /api/v3/remittances
+```
+
+```json
+{
+  "error": {
+    "code": "UNSUPPORTED_API_VERSION",
+    "message": "Unsupported API version",
+    "details": {
+      "requested_version": "v3",
+      "source": "path",
+      "supported_versions": ["v1", "v2"]
+    }
+  }
+}
+```
+
+For conflicting versions, the message is `"Conflicting API versions in request"`, and `details.versions` lists the value each source sent, for example `{"path": "v1", "X-API-Version": "v2"}`.
+
 ## Deprecation Warnings
 
-When using deprecated API versions (v1), the response will include deprecation headers:
+Responses to a deprecated version (v1) include the standard deprecation headers:
+
+```
+Deprecation: @1798675200
+Sunset: Wed, 30 Jun 2027 00:00:00 GMT
+Link: </docs/migration>; rel="deprecation"; type="text/html"
+```
+
+- `Deprecation` follows RFC 9745. The value is the deprecation date as a Unix timestamp, here 2026-12-31.
+- `Sunset` follows RFC 8594 and gives the date the version stops working.
+- `Link` points to the migration guide.
+
+The legacy `X-API-*` headers are still sent for existing clients:
 
 ```
 X-API-Deprecation-Warning: This API version is deprecated

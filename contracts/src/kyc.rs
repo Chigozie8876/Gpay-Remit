@@ -83,7 +83,9 @@ pub enum KycDataKey {
 #[contract]
 pub struct MockKycOracleContract;
 
-#[contractimpl]
+// Wasm builds export one contract each (`--features mock-kyc`) because the
+// contracts in this crate share entry-point names; native builds export all.
+#[cfg_attr(any(not(target_family = "wasm"), feature = "mock-kyc"), contractimpl)]
 impl MockKycOracleContract {
     pub fn init_kyc(env: Env, admin: Address) {
         admin.require_auth();

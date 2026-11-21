@@ -39,8 +39,16 @@ tags:
     description: Transaction analytics (admin only)
   - name: Audit
     description: Audit log access (admin only)
+  - name: Contacts
+    description: Address book and recipient management
+  - name: Payment Requests
+    description: Requesting and settling payments between users
+  - name: Exchange Rates
+    description: Currency exchange rates
+  - name: Admin
+    description: Operational controls (admin only)
   - name: Health
-    description: Service health and readiness probes
+    description: Service health and readiness probes (served at the root, not under /api/vN)
 
 components:
   securitySchemes:
@@ -48,6 +56,14 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+
+  parameters:
+    PaymentRequestID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: integer
 
   schemas:
     Error:
@@ -99,6 +115,72 @@ components:
           example: "eyJhbGciOiJIUzI1NiIs..."
         user:
           $ref: '#/components/schemas/User'
+
+    Contact:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        user_id:
+          type: integer
+          example: 42
+        nickname:
+          type: string
+          example: Alice Personal
+        stellar_address:
+          type: string
+          example: GBZC6YRFWINCGYH6FFIK3VY4KF3WZJQR7CD3S5Y4GVNIKU5RM3JY7YEX
+        currency:
+          type: string
+          example: USDC
+        email:
+          type: string
+          example: alice@example.com
+        notes:
+          type: string
+          example: Friend in London
+        verification_status:
+          type: string
+          enum: [pending, verified, failed]
+          example: verified
+        is_verified:
+          type: boolean
+          example: true
+
+    CreateContactRequest:
+      type: object
+      required: [nickname, stellar_address]
+      properties:
+        nickname:
+          type: string
+          example: Alice Personal
+        stellar_address:
+          type: string
+          example: GBZC6YRFWINCGYH6FFIK3VY4KF3WZJQR7CD3S5Y4GVNIKU5RM3JY7YEX
+        currency:
+          type: string
+          example: USDC
+        email:
+          type: string
+          example: alice@example.com
+        notes:
+          type: string
+          example: Friend in London
+
+    UpdateContactRequest:
+      type: object
+      properties:
+        nickname:
+          type: string
+        stellar_address:
+          type: string
+        currency:
+          type: string
+        email:
+          type: string
+        notes:
+          type: string
 
     User:
       type: object
@@ -870,6 +952,153 @@ paths:
         '403':
           description: Admin role required
 
+  /audit/logs:
+    get:
+      tags: [Audit]
+      summary: List audit log entries (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Audit log entries
+        '403':
+          description: Admin role required
+
+  /contacts:
+    get:
+      tags: [Contacts]
+      summary: List address book contacts
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of contacts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Contact'
+    post:
+      tags: [Contacts]
+      summary: Create new contact in address book
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContactRequest'
+      responses:
+        '201':
+          description: Contact created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+
+  /contacts/{id}:
+    get:
+      tags: [Contacts]
+      summary: Get contact by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Contact details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '404':
+          description: Contact not found
+    put:
+      tags: [Contacts]
+      summary: Update contact
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContactRequest'
+      responses:
+        '200':
+          description: Contact updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+    delete:
+      tags: [Contacts]
+      summary: Delete contact
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Contact deleted
+
+  /contacts/{id}/verify:
+    post:
+      tags: [Contacts]
+      summary: Verify contact on Stellar network
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Contact verification result
+
+  /transactions/export:
+    get:
+      tags: [Audit]
+      summary: Export transactions as CSV
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema:
+                type: string
+
   /analytics/sla:
     get:
       tags: [Analytics]
@@ -903,44 +1132,488 @@ paths:
         '403':
           description: Admin role required
 
-  /audit/logs:
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request a password reset email
+      description: Always returns 200 so callers cannot probe which emails are registered.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Reset email sent if the account exists
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Set a new password using a reset token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Password reset
+        '400':
+          description: Invalid or expired token, or weak password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/request-unlock:
+    post:
+      tags: [Auth]
+      summary: Request an account unlock email after lockout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Unlock email sent if the account is locked
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/unlock:
+    post:
+      tags: [Auth]
+      summary: Unlock a locked account using an unlock token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Account unlocked
+        '400':
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users:
+    post:
+      tags: [Auth]
+      summary: Register a new user (alias of POST /auth/register)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current access token
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Logged out
+        '401':
+          description: Missing or invalid token
+
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Change the authenticated user's password
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                  format: password
+                new_password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Password changed
+        '400':
+          description: Validation error or weak password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Current password is wrong or token invalid
+
+  /auth/mfa/setup:
+    post:
+      tags: [Auth]
+      summary: Start TOTP MFA enrolment
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: TOTP secret and QR code to scan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret:
+                    type: string
+                  qr_code:
+                    type: string
+                    description: Base64-encoded PNG
+        '401':
+          description: Wrong password or invalid token
+
+  /auth/mfa/verify:
+    post:
+      tags: [Auth]
+      summary: Confirm MFA enrolment with a TOTP code
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  example: "123456"
+      responses:
+        '200':
+          description: MFA enabled
+        '400':
+          description: Invalid code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/mfa/disable:
+    post:
+      tags: [Auth]
+      summary: Disable MFA for the authenticated user
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: MFA disabled
+        '401':
+          description: Wrong password or invalid token
+
+  /auth/mfa/status:
     get:
-      tags: [Audit]
-      summary: List audit log entries (admin)
+      tags: [Auth]
+      summary: Whether MFA is enabled for the authenticated user
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: MFA status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mfa_enabled:
+                    type: boolean
+        '404':
+          description: User not found
+
+  /payment-requests:
+    post:
+      tags: [Payment Requests]
+      summary: Request a payment from another user
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_user_id, amount, currency, asset_code]
+              properties:
+                target_user_id:
+                  type: integer
+                amount:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: Amount in minor units
+                currency:
+                  type: string
+                  example: USD
+                asset_code:
+                  type: string
+                  example: USDC
+                asset_issuer:
+                  type: string
+                description:
+                  type: string
+                reference:
+                  type: string
+                expires_in_hours:
+                  type: integer
+      responses:
+        '201':
+          description: Payment request created
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [Payment Requests]
+      summary: List payment requests sent or received by the user
       security:
         - BearerAuth: []
       parameters:
         - in: query
-          name: page
+          name: status
           schema:
-            type: integer
-            default: 1
-        - in: query
-          name: page_size
-          schema:
-            type: integer
-            default: 20
+            type: string
+          description: Filter by status
       responses:
         '200':
-          description: Audit log entries
+          description: Payment requests
+
+  /payment-requests/{id}:
+    get:
+      tags: [Payment Requests]
+      summary: Get a payment request
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentRequestID'
+      responses:
+        '200':
+          description: Payment request
+        '404':
+          description: Not found
+
+  /payment-requests/{id}/accept:
+    post:
+      tags: [Payment Requests]
+      summary: Accept and pay a payment request
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentRequestID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sender_account]
+              properties:
+                sender_account:
+                  type: string
+                  description: Stellar account the payment is sent from
+      responses:
+        '200':
+          description: Accepted
+        '400':
+          description: Request is not pending or body is invalid
+        '404':
+          description: Not found
+
+  /payment-requests/{id}/reject:
+    post:
+      tags: [Payment Requests]
+      summary: Reject a payment request
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentRequestID'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Rejected
+        '404':
+          description: Not found
+
+  /payment-requests/{id}/cancel:
+    post:
+      tags: [Payment Requests]
+      summary: Cancel a payment request you created
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentRequestID'
+      responses:
+        '200':
+          description: Cancelled
+        '404':
+          description: Not found
+
+  /exchange-rates:
+    get:
+      tags: [Exchange Rates]
+      summary: Get the exchange rate between two currencies
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            example: USD
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: string
+            example: NGN
+      responses:
+        '200':
+          description: Exchange rate
+        '400':
+          description: Missing or unsupported currency
+        '429':
+          description: Rate limit exceeded
+
+  /admin/rate-limit/reset:
+    post:
+      tags: [Admin]
+      summary: Reset rate-limit counters for a user (admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: user_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: endpoint
+          schema:
+            type: string
+          description: Limit the reset to one endpoint
+      responses:
+        '200':
+          description: Counters reset
+        '400':
+          description: user_id is required
         '403':
           description: Admin role required
 
-  /transactions/export:
+  /admin/rate-limit/view:
     get:
-      tags: [Audit]
-      summary: Export transactions as CSV
+      tags: [Admin]
+      summary: View current rate-limit counters (admin)
       security:
         - BearerAuth: []
+      parameters:
+        - in: query
+          name: user_id
+          schema:
+            type: string
+          description: Show one user; omit for all users
       responses:
         '200':
-          description: CSV file
-          content:
-            text/csv:
-              schema:
-                type: string
+          description: Rate-limit counters
+        '403':
+          description: Admin role required
 
-/health:
+  /health:
+    servers:
+      - url: http://localhost:8080
+        description: Health probes are served at the root
     get:
       tags: [Health]
       summary: Full health check with dependency status
@@ -959,6 +1632,9 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
 
   /health/ready:
+    servers:
+      - url: http://localhost:8080
+        description: Health probes are served at the root
     get:
       tags: [Health]
       summary: Kubernetes readiness probe
@@ -969,6 +1645,9 @@ paths:
           description: Service not ready
 
   /health/live:
+    servers:
+      - url: http://localhost:8080
+        description: Health probes are served at the root
     get:
       tags: [Health]
       summary: Kubernetes liveness probe

@@ -23,6 +23,7 @@ import (
 	"github.com/Gpay-Remit/gpay-remit/workers"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // shuttingDown signals goroutines to stop when a shutdown signal is received
@@ -65,6 +66,83 @@ func main() {
 	router.Use(middleware.TLSMiddleware())
 	router.Use(middleware.CSRFProtection())
 
+	registerRoutes(router, db, cfg)
+
+	server := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
+	}
+
+	baseCtx, cancelWorkers := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	middleware.StartIdempotencyCleanupScheduler(baseCtx, &wg, db, time.Hour)
+	workers.StartMonitor(baseCtx, &wg)
+	workers.StartWebhookRetryWorker(baseCtx, &wg, db)
+	workers.StartPaymentRequestExpiryWorker(baseCtx, &wg, db)
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Log.WithField("port", cfg.Port).Info("Starting Gpay-Remit API server")
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-sigCh:
+		shuttingDown.Store(true)
+		logger.Log.WithField("signal", sig.String()).Info("Shutdown signal received")
+	case err := <-errCh:
+		logger.Log.WithField("error", err).Fatal("Server failed unexpectedly")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	logger.Log.Info("Stopping background workers...")
+	cancelWorkers()
+
+	logger.Log.Info("Shutting down HTTP server...")
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Log.WithField("error", err).Error("HTTP server shutdown error")
+	} else {
+		logger.Log.Info("HTTP server stopped accepting new requests")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		logger.Log.Info("Background workers stopped")
+	case <-shutdownCtx.Done():
+		logger.Log.Warn("Timeout waiting for background workers to stop")
+	}
+
+	logger.Log.Info("Stopping database connection pool monitor...")
+	config.StopConnectionPoolMonitor()
+
+	logger.Log.Info("Closing database connection...")
+	if sqlDB, err := db.DB(); err != nil {
+		logger.Log.WithField("error", err).Error("Failed to get sql.DB for closing")
+	} else if err := sqlDB.Close(); err != nil {
+		logger.Log.WithField("error", err).Error("Failed to close database connection")
+	} else {
+		logger.Log.Info("Database connection closed")
+	}
+}
+
+// registerRoutes mounts every HTTP route on router. It is separate from
+// main so tests can enumerate the real route table (see
+// openapi_routes_test.go) without a database: handler constructors only
+// store their dependencies, so nil db is fine for registration.
+func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	healthHandler := handlers.NewHealthHandlerWithRedis(db, cfg, utils.RedisClient)
@@ -124,6 +202,14 @@ func main() {
 			protected.POST("/invoices", remittanceHandler.CreateInvoice)
 			protected.GET("/invoices", remittanceHandler.ListInvoices)
 			protected.GET("/invoices/:id", remittanceHandler.GetInvoice)
+
+			contactHandler := handlers.NewContactHandler(db, cfg, utils.NewStellarClient(cfg.HorizonURL, cfg.NetworkPassphrase))
+			protected.POST("/contacts", contactHandler.CreateContact)
+			protected.GET("/contacts", contactHandler.ListContacts)
+			protected.GET("/contacts/:id", contactHandler.GetContact)
+			protected.PUT("/contacts/:id", contactHandler.UpdateContact)
+			protected.DELETE("/contacts/:id", contactHandler.DeleteContact)
+			protected.POST("/contacts/:id/verify", contactHandler.VerifyContact)
 
 			feeService := services.NewFeeService(cfg)
 			feeHandler := handlers.NewFeeHandler(feeService)
@@ -216,6 +302,14 @@ func main() {
 			protected.GET("/invoices", remittanceHandler.ListInvoices)
 			protected.GET("/invoices/:id", remittanceHandler.GetInvoice)
 
+			contactHandler := handlers.NewContactHandler(db, cfg, utils.NewStellarClient(cfg.HorizonURL, cfg.NetworkPassphrase))
+			protected.POST("/contacts", contactHandler.CreateContact)
+			protected.GET("/contacts", contactHandler.ListContacts)
+			protected.GET("/contacts/:id", contactHandler.GetContact)
+			protected.PUT("/contacts/:id", contactHandler.UpdateContact)
+			protected.DELETE("/contacts/:id", contactHandler.DeleteContact)
+			protected.POST("/contacts/:id/verify", contactHandler.VerifyContact)
+
 			feeService := services.NewFeeService(cfg)
 			feeHandler := handlers.NewFeeHandler(feeService)
 			protected.GET("/fees/calculate", feeHandler.Calculate)
@@ -259,74 +353,5 @@ func main() {
 			protected.GET("/analytics/sla", middleware.RequireRole("admin"), analyticsHandler.GetSLAMetrics)
 
 		}
-	}
-
-	server := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: router,
-	}
-
-	baseCtx, cancelWorkers := context.WithCancel(context.Background())
-	var wg sync.WaitGroup
-	middleware.StartIdempotencyCleanupScheduler(baseCtx, &wg, db, time.Hour)
-	workers.StartMonitor(baseCtx, &wg)
-	workers.StartWebhookRetryWorker(baseCtx, &wg, db)
-	workers.StartPaymentRequestExpiryWorker(baseCtx, &wg, db)
-
-	errCh := make(chan error, 1)
-	go func() {
-		logger.Log.WithField("port", cfg.Port).Info("Starting Gpay-Remit API server")
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	select {
-	case sig := <-sigCh:
-		shuttingDown.Store(true)
-		logger.Log.WithField("signal", sig.String()).Info("Shutdown signal received")
-	case err := <-errCh:
-		logger.Log.WithField("error", err).Fatal("Server failed unexpectedly")
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	logger.Log.Info("Stopping background workers...")
-	cancelWorkers()
-
-	logger.Log.Info("Shutting down HTTP server...")
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Log.WithField("error", err).Error("HTTP server shutdown error")
-	} else {
-		logger.Log.Info("HTTP server stopped accepting new requests")
-	}
-
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		logger.Log.Info("Background workers stopped")
-	case <-shutdownCtx.Done():
-		logger.Log.Warn("Timeout waiting for background workers to stop")
-	}
-
-	logger.Log.Info("Stopping database connection pool monitor...")
-	config.StopConnectionPoolMonitor()
-
-	logger.Log.Info("Closing database connection...")
-	if sqlDB, err := db.DB(); err != nil {
-		logger.Log.WithField("error", err).Error("Failed to get sql.DB for closing")
-	} else if err := sqlDB.Close(); err != nil {
-		logger.Log.WithField("error", err).Error("Failed to close database connection")
-	} else {
-		logger.Log.Info("Database connection closed")
 	}
 }

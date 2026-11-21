@@ -43,3 +43,13 @@ func DocsUI(c *gin.Context) {
 func DocsSpec(c *gin.Context) {
 	c.Data(http.StatusOK, "application/yaml", openapiSpec)
 }
+
+// OpenAPISpec returns the embedded OpenAPI document served at
+// /api/docs/openapi.yaml. This file (backend/handlers/openapi.yaml) is the
+// single canonical spec; openapi_routes_test.go checks it against the
+// registered Gin routes.
+func OpenAPISpec() []byte {
+	out := make([]byte, len(openapiSpec))
+	copy(out, openapiSpec)
+	return out
+}

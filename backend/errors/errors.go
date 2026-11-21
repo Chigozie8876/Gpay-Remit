@@ -17,6 +17,10 @@ const (
 	CodeConflict      ErrorCode = "CONFLICT"
 )
 
+// CodeUnsupportedVersion is returned when a request names an API version that
+// does not exist, or names two different versions (path vs header).
+const CodeUnsupportedVersion ErrorCode = "UNSUPPORTED_API_VERSION"
+
 // AppError represents a standardized application error
 type AppError struct {
 	Code       ErrorCode   `json:"code"`

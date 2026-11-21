@@ -25,3 +25,27 @@ harness = false
 [features]
 prop = []
 integration = []
+# Contract selection for Wasm builds. The contracts in this crate share
+# entry-point names (e.g. get_global_rate_limit_config), so a single Wasm
+# module cannot export more than one of them. Build one contract per module:
+#   cargo build --release --target wasm32v1-none --features escrow
+# Native (test) builds ignore these and export every contract.
+escrow = []
+hub = []
+mock-oracle = []
+mock-kyc = []
+mock-aml = []
+
+# Size-optimised profile for deployable Wasm (Soroban caps contract code at
+# 128 KiB). Separate from `release` so criterion benches keep opt-level 3.
+#   cargo build --profile release-wasm --target wasm32v1-none --features <contract>
+[profile.release-wasm]
+inherits = "release"
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
