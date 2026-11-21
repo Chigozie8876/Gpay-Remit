@@ -171,3 +171,4 @@ func TestContactHandler_CRUD(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, w2.Code)
 	})
 }
+
