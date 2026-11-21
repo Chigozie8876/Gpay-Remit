@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@ledgerhq/hw-app-stellar": "^6.28.1",
+    "@ledgerhq/hw-app-str": "^7.9.0",
     "@ledgerhq/hw-transport-webusb": "^6.28.1",
     "@stellar/freighter-api": "^3.1.0",
     "@stellar/stellar-sdk": "^11.2.2",
-    "albedo-link": "^0.2.5",
+    "@albedo-link/intent": "^0.13.0",
     "axios": "^1.6.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useMemo, useCallback } from 'react';
-import { LedgerWalletService } from '../services/wallets/ledger';
-import { FreighterWalletService } from '../services/wallets/freighter';
-import { AlbedoWalletService } from '../services/wallets/albedo';
-import { XBullWalletService } from '../services/wallets/xbull';
+import { LedgerWalletService } from '../services/wallets/ledger.ts';
+import { FreighterWalletService } from '../services/wallets/freighter.ts';
+import { AlbedoWalletService } from '../services/wallets/albedo.ts';
+import { XBullWalletService } from '../services/wallets/xbull.ts';
 
 /** @typedef {'ledger'|'freighter'|'albedo'|'xbull'} WalletType */
 

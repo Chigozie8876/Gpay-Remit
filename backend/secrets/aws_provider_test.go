@@ -44,11 +44,11 @@ func TestAWSSecretsManagerProvider_GetSecret_ReturnsValueFromClient(t *testing.T
 	}
 	provider := newAWSSecretsManagerProviderWithClient(client, time.Minute)
 
-	value, err := provider.GetSecret(context.Background(), "prod/jwt-secret")
+	value, err := provider.GetSecret(context.Background(), "PROD_JWT_SECRET")
 
 	require.NoError(t, err)
 	assert.Equal(t, "super-secret-jwt-value", value)
-	assert.Equal(t, "prod/jwt-secret", client.lastSecretID)
+	assert.Equal(t, "PROD_JWT_SECRET", client.lastSecretID)
 }
 
 func TestAWSSecretsManagerProvider_GetSecret_CachesWithinTTL(t *testing.T) {
@@ -59,11 +59,11 @@ func TestAWSSecretsManagerProvider_GetSecret_CachesWithinTTL(t *testing.T) {
 	}
 	provider := newAWSSecretsManagerProviderWithClient(client, time.Minute)
 
-	_, err := provider.GetSecret(context.Background(), "my-secret")
+	_, err := provider.GetSecret(context.Background(), "MY_SECRET")
 	require.NoError(t, err)
-	_, err = provider.GetSecret(context.Background(), "my-secret")
+	_, err = provider.GetSecret(context.Background(), "MY_SECRET")
 	require.NoError(t, err)
-	_, err = provider.GetSecret(context.Background(), "my-secret")
+	_, err = provider.GetSecret(context.Background(), "MY_SECRET")
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, client.calls, "expected only the first call to hit AWS; the rest should be served from cache")
@@ -78,10 +78,10 @@ func TestAWSSecretsManagerProvider_GetSecret_RefetchesAfterCacheExpires(t *testi
 	// Effectively-zero TTL: any two sequential calls should both hit AWS.
 	provider := newAWSSecretsManagerProviderWithClient(client, 1*time.Nanosecond)
 
-	_, err := provider.GetSecret(context.Background(), "my-secret")
+	_, err := provider.GetSecret(context.Background(), "MY_SECRET")
 	require.NoError(t, err)
 	time.Sleep(2 * time.Millisecond)
-	_, err = provider.GetSecret(context.Background(), "my-secret")
+	_, err = provider.GetSecret(context.Background(), "MY_SECRET")
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, client.calls)
@@ -95,9 +95,9 @@ func TestAWSSecretsManagerProvider_GetSecret_CachesPerSecretNameIndependently(t 
 	}
 	provider := newAWSSecretsManagerProviderWithClient(client, time.Minute)
 
-	_, err := provider.GetSecret(context.Background(), "secret-a")
+	_, err := provider.GetSecret(context.Background(), "SECRET_A")
 	require.NoError(t, err)
-	_, err = provider.GetSecret(context.Background(), "secret-b")
+	_, err = provider.GetSecret(context.Background(), "SECRET_B")
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, client.calls, "different secret names must not share a cache entry")
@@ -107,7 +107,7 @@ func TestAWSSecretsManagerProvider_GetSecret_ReturnsErrorWhenClientFails(t *test
 	client := &fakeSecretsManagerClient{err: assert.AnError}
 	provider := newAWSSecretsManagerProviderWithClient(client, time.Minute)
 
-	_, err := provider.GetSecret(context.Background(), "my-secret")
+	_, err := provider.GetSecret(context.Background(), "MY_SECRET")
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, assert.AnError)
@@ -122,7 +122,7 @@ func TestAWSSecretsManagerProvider_GetSecret_ReturnsErrorForBinarySecret(t *test
 	}
 	provider := newAWSSecretsManagerProviderWithClient(client, time.Minute)
 
-	_, err := provider.GetSecret(context.Background(), "my-secret")
+	_, err := provider.GetSecret(context.Background(), "MY_SECRET")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "binary secrets are not supported")
@@ -132,14 +132,31 @@ func TestAWSSecretsManagerProvider_GetSecret_DoesNotCacheOnError(t *testing.T) {
 	client := &fakeSecretsManagerClient{err: assert.AnError}
 	provider := newAWSSecretsManagerProviderWithClient(client, time.Minute)
 
-	_, err1 := provider.GetSecret(context.Background(), "my-secret")
+	_, err1 := provider.GetSecret(context.Background(), "MY_SECRET")
 	require.Error(t, err1)
 
 	client.err = nil
 	client.response = &secretsmanager.GetSecretValueOutput{SecretString: stringPtr("recovered")}
 
-	value, err2 := provider.GetSecret(context.Background(), "my-secret")
+	value, err2 := provider.GetSecret(context.Background(), "MY_SECRET")
 	require.NoError(t, err2)
 	assert.Equal(t, "recovered", value)
 	assert.Equal(t, 2, client.calls, "a failed fetch must not be cached, so the next call retries")
+}
+
+func TestAWSSecretsManagerProvider_GetSecret_RejectsInvalidNames(t *testing.T) {
+	client := &fakeSecretsManagerClient{
+		response: &secretsmanager.GetSecretValueOutput{SecretString: stringPtr("value")},
+	}
+	provider := newAWSSecretsManagerProviderWithClient(client, time.Minute)
+
+	for _, name := range []string{"../MY_SECRET", "secrets/MY_SECRET", "MY-SECRET", "MY SECRET", "MY.SECRET"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := provider.GetSecret(context.Background(), name)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid secret name")
+		})
+	}
+
+	assert.Zero(t, client.calls)
 }

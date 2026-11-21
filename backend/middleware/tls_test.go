@@ -32,6 +32,10 @@ func TestTLSMiddleware(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, "max-age=31536000; includeSubDomains", w.Header().Get("Strict-Transport-Security"))
+		assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+		assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+		assert.Equal(t, "strict-origin-when-cross-origin", w.Header().Get("Referrer-Policy"))
+		assert.Equal(t, "geolocation=(), microphone=(), camera=()", w.Header().Get("Permissions-Policy"))
 	})
 
 	t.Run("production redirects HTTP to HTTPS", func(t *testing.T) {

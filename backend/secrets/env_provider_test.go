@@ -35,3 +35,15 @@ func TestEnvProvider_GetSecret_ErrorsWhenEmpty(t *testing.T) {
 
 	require.Error(t, err)
 }
+
+func TestEnvProvider_GetSecret_RejectsInvalidNames(t *testing.T) {
+	provider := NewEnvProvider()
+
+	for _, name := range []string{"../JWT_SECRET", "secrets/JWT_SECRET", "JWT-SECRET", "JWT SECRET", "JWT.SECRET"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := provider.GetSecret(context.Background(), name)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid secret name")
+		})
+	}
+}
