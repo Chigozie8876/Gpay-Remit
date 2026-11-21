@@ -147,7 +147,7 @@ fn test_fee_calculation_multiple_fees_overflow() {
     client.set_platform_fee(&admin, &10000);
     client.set_processing_fee(&admin, &10000);
     client.set_forex_fee(&admin, &10000);
-    client.set_compliance_fee(&admin, &i128::MAX);
+    client.set_compliance_fee(&admin, &10000); // max allowed (bps)
 
     let amount = i128::MAX / 10000;
     token_admin.mint(&sender, &(amount * 2));

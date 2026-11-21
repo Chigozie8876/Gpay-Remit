@@ -1,0 +1,28 @@
+[package]
+name = "gpay-remit-contracts-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+soroban-sdk = { version = "21.0.0", features = ["testutils"] }
+gpay-remit-contracts = { path = ".." }
+
+[workspace]
+
+[[bin]]
+name = "fuzz_fees"
+path = "fuzz_targets/fuzz_fees.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_escrow_release"
+path = "fuzz_targets/fuzz_escrow_release.rs"
+test = false
+doc = false

@@ -1,0 +1,59 @@
+name: Nightly Fuzz
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: "Seconds to fuzz each target"
+        default: "600"
+
+jobs:
+  proptest-deep:
+    name: Deep proptest run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
+      - name: Run proptest fuzz suites with many cases
+        working-directory: ./contracts
+        env:
+          PROPTEST_CASES: "5000"
+        run: cargo test --locked --all-features --test fuzz_escrow --test fuzz_fees --test fuzz_remittance
+
+  cargo-fuzz:
+    name: cargo-fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fuzz_fees, fuzz_escrow_release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/fuzz/target
+          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('contracts/fuzz/Cargo.toml') }}
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: ./contracts
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=${{ github.event.inputs.max_total_time || '600' }}
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: contracts/fuzz/artifacts/${{ matrix.target }}

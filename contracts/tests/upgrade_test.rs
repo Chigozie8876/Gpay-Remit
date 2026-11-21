@@ -538,3 +538,137 @@ fn test_upgradeable_upgrade_and_migrate_cycle() {
         assert!(!upgradeable::is_paused(&env));
     });
 }
+
+// ---------------------------------------------------------------------------
+// Migration version compatibility, skipped versions and rollback (#372)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_upgrade_n_to_n_plus_1_tracks_migration_version() {
+    let env = Env::default();
+    let (client, admin, _u1, _u2) = setup_hub(&env);
+    assert_eq!(client.version(), 1);
+    assert_eq!(client.migration_version(), 1);
+    assert!(!client.is_migration_pending());
+
+    client.upgrade_to(&admin, &dummy_wasm_hash(&env), &2);
+    assert_eq!(client.version(), 2);
+    // Data layout still at v1 until migrate runs
+    assert_eq!(client.migration_version(), 1);
+    assert!(client.is_migration_pending());
+    assert!(client.is_paused());
+
+    assert_eq!(client.migrate(&admin), 2);
+    assert_eq!(client.migration_version(), 2);
+    assert!(!client.is_migration_pending());
+    assert!(!client.is_paused());
+}
+
+#[test]
+fn test_upgrade_to_rejects_skipped_version() {
+    let env = Env::default();
+    let (client, admin, _u1, _u2) = setup_hub(&env);
+    let res = client.try_upgrade_to(&admin, &dummy_wasm_hash(&env), &3);
+    assert_eq!(res, Err(Ok(UpgradeError::VersionSkipped)));
+    // Nothing changed
+    assert_eq!(client.version(), 1);
+    assert!(!client.is_paused());
+    assert!(!client.is_migration_pending());
+}
+
+#[test]
+fn test_upgrade_to_rejects_same_or_older_version() {
+    let env = Env::default();
+    let (client, admin, _u1, _u2) = setup_hub(&env);
+    assert_eq!(
+        client.try_upgrade_to(&admin, &dummy_wasm_hash(&env), &1),
+        Err(Ok(UpgradeError::VersionSkipped))
+    );
+    assert_eq!(
+        client.try_upgrade_to(&admin, &dummy_wasm_hash(&env), &0),
+        Err(Ok(UpgradeError::VersionSkipped))
+    );
+}
+
+#[test]
+fn test_upgrade_rejected_while_migration_pending() {
+    let env = Env::default();
+    let (client, admin, _u1, _u2) = setup_hub(&env);
+    client.upgrade(&admin, &dummy_wasm_hash(&env));
+    let res = client.try_upgrade(&admin, &dummy_wasm_hash2(&env));
+    assert_eq!(res, Err(Ok(UpgradeError::MigrationPending)));
+    assert_eq!(client.version(), 2);
+}
+
+#[test]
+fn test_upgrade_to_unauthorized_fails() {
+    let env = Env::default();
+    let (client, _admin, user1, _u2) = setup_hub(&env);
+    let res = client.try_upgrade_to(&user1, &dummy_wasm_hash(&env), &2);
+    assert_eq!(res, Err(Ok(UpgradeError::Unauthorized)));
+}
+
+#[test]
+fn test_rollback_restores_previous_version_and_unpauses() {
+    let env = Env::default();
+    let (client, admin, _u1, _u2) = setup_hub(&env);
+    client.upgrade(&admin, &dummy_wasm_hash(&env));
+    assert_eq!(client.version(), 2);
+
+    assert_eq!(client.rollback(&admin), 1);
+    assert_eq!(client.version(), 1);
+    assert_eq!(client.migration_version(), 1);
+    assert!(!client.is_migration_pending());
+    assert!(!client.is_paused());
+
+    // The same N -> N+1 upgrade can be retried after a rollback
+    client.upgrade(&admin, &dummy_wasm_hash2(&env));
+    assert_eq!(client.version(), 2);
+}
+
+#[test]
+fn test_rollback_without_pending_upgrade_fails() {
+    let env = Env::default();
+    let (client, admin, _u1, _u2) = setup_hub(&env);
+    assert_eq!(
+        client.try_rollback(&admin),
+        Err(Ok(UpgradeError::NothingToRollback))
+    );
+}
+
+#[test]
+fn test_rollback_not_allowed_after_migrate() {
+    let env = Env::default();
+    let (client, admin, _u1, _u2) = setup_hub(&env);
+    client.upgrade(&admin, &dummy_wasm_hash(&env));
+    client.migrate(&admin);
+    assert_eq!(
+        client.try_rollback(&admin),
+        Err(Ok(UpgradeError::NothingToRollback))
+    );
+    assert_eq!(client.version(), 2);
+}
+
+#[test]
+fn test_rollback_unauthorized_fails() {
+    let env = Env::default();
+    let (client, admin, user1, _u2) = setup_hub(&env);
+    client.upgrade(&admin, &dummy_wasm_hash(&env));
+    assert_eq!(
+        client.try_rollback(&user1),
+        Err(Ok(UpgradeError::Unauthorized))
+    );
+    assert_eq!(client.version(), 2);
+    assert!(client.is_paused());
+}
+
+#[test]
+fn test_data_survives_upgrade_and_rollback() {
+    let env = Env::default();
+    let (client, admin, user1, user2) = setup_hub(&env);
+    client.upgrade(&admin, &dummy_wasm_hash(&env));
+    client.rollback(&admin);
+    // Contract is operational again after rollback
+    let id = client.send_remittance(&user1, &user2, &500, &symbol_short!("USD"));
+    assert!(client.get_remittance(&id).is_some());
+}
