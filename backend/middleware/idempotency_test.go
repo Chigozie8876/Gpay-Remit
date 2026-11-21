@@ -1,13 +1,13 @@
 package middleware
 
 import (
-	"sync"
 	"context"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	"github.com/Gpay-Remit/gpay-remit/models"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -15,6 +15,9 @@ import (
 func TestStartIdempotencyCleanupSchedulerCleansExpiredRecords(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.IdempotencyRecord{}))
 
 	now := time.Now()

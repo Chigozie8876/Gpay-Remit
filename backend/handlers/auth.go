@@ -2,14 +2,14 @@ package handlers
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/sirupsen/logrus"
 	"github.com/Gpay-Remit/gpay-remit/config"
 	"github.com/Gpay-Remit/gpay-remit/errors"
 	"github.com/Gpay-Remit/gpay-remit/logger"
@@ -17,6 +17,10 @@ import (
 	"github.com/Gpay-Remit/gpay-remit/models"
 	"github.com/Gpay-Remit/gpay-remit/services"
 	"github.com/Gpay-Remit/gpay-remit/utils"
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -64,6 +68,56 @@ type ForgotPasswordRequest struct {
 type ResetPasswordRequest struct {
 	Token       string `json:"token" binding:"required"`
 	NewPassword string `json:"new_password" binding:"required"`
+}
+
+// ChangePasswordRequest is the request body for changing a password.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" binding:"required"`
+	NewPassword     string `json:"new_password" binding:"required"`
+}
+
+// RequestUnlockRequest is the request body for requesting an account unlock link.
+type RequestUnlockRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// UnlockAccountRequest is the request body for unlocking an account.
+type UnlockAccountRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+type loginFailureDetails struct {
+	RemainingAttempts      int `json:"remaining_attempts"`
+	LockoutDurationSeconds int `json:"lockout_duration_seconds"`
+}
+
+var dummyPasswordHash = func() string {
+	hash, err := bcrypt.GenerateFromPassword([]byte("not-a-real-account-password"), 12)
+	if err != nil {
+		return ""
+	}
+	return string(hash)
+}()
+
+func hashAccountUnlockToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (h *AuthHandler) loginFailure(c *gin.Context, status int, code errors.ErrorCode, remaining int, message string) {
+	c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
+	c.Error(errors.NewAppError(status, code, message, nil, loginFailureDetails{
+		RemainingAttempts:      remaining,
+		LockoutDurationSeconds: int(models.AccountLockoutDuration.Seconds()),
+	}))
+}
+
+func invalidCredentialsMessage() string {
+	return fmt.Sprintf(
+		"Invalid credentials. After %d failed attempts, access is locked for %d minutes.",
+		models.MaxFailedLoginAttempts,
+		int(models.AccountLockoutDuration.Minutes()),
+	)
 }
 
 // Register creates a new user account with a bcrypt-hashed password.
@@ -121,28 +175,32 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	var user models.User
-	if err := h.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
-		c.Error(errors.NewUnauthorizedError("Invalid credentials"))
+	userLookupErr := h.DB.Where("email = ?", req.Email).First(&user).Error
+	if userLookupErr != nil {
+		models.ComparePassword(dummyPasswordHash, req.Password)
+		h.loginFailure(c, http.StatusUnauthorized, errors.CodeUnauthorized,
+			models.MaxFailedLoginAttempts-1, invalidCredentialsMessage())
 		return
 	}
 
-	// Check if account is locked
 	if user.IsAccountLocked() {
 		logger.Log.WithFields(logrus.Fields{
 			"user_id":  user.ID,
 			"endpoint": "/auth/login",
 		}).Warn("Login attempt on locked account")
-		c.Error(errors.NewForbiddenError("Account is temporarily locked due to multiple failed login attempts. Please try again later."))
+		message := fmt.Sprintf("Account is temporarily locked. Please try again in %d minutes.",
+			int(models.AccountLockoutDuration.Minutes()))
+		h.loginFailure(c, http.StatusForbidden, errors.CodeForbidden, 0, message)
 		return
 	}
 
 	if !user.IsActive {
-		c.Error(errors.NewForbiddenError("User account is inactive"))
+		h.loginFailure(c, http.StatusForbidden, errors.CodeForbidden,
+			user.RemainingLoginAttempts(), invalidCredentialsMessage())
 		return
 	}
 
 	if !models.ComparePassword(user.PasswordHash, req.Password) {
-		// Record failed login attempt
 		if err := user.RecordFailedLogin(h.DB); err != nil {
 			logger.Log.WithFields(logrus.Fields{
 				"user_id": user.ID,
@@ -155,11 +213,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			"attempts": user.FailedLoginAttempts,
 		}).Warn("Failed login attempt")
 
-		// Check if account is now locked after recording the failed attempt
-		if user.FailedLoginAttempts >= 5 {
-			c.Error(errors.NewForbiddenError("Account locked due to multiple failed login attempts. Please try again in 30 minutes."))
+		if user.IsAccountLocked() {
+			message := fmt.Sprintf("Account locked due to multiple failed login attempts. Please try again in %d minutes.",
+				int(models.AccountLockoutDuration.Minutes()))
+			h.loginFailure(c, http.StatusForbidden, errors.CodeForbidden, 0, message)
 		} else {
-			c.Error(errors.NewUnauthorizedError("Invalid credentials"))
+			h.loginFailure(c, http.StatusUnauthorized, errors.CodeUnauthorized,
+				user.RemainingLoginAttempts(), invalidCredentialsMessage())
 		}
 		return
 	}
@@ -172,11 +232,25 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		}
 
 		if !user.VerifyTOTP(req.TOTPCode) {
+			if err := user.RecordFailedLogin(h.DB); err != nil {
+				logger.Log.WithFields(logrus.Fields{
+					"user_id": user.ID,
+				}).Error("Failed to record failed TOTP attempt")
+			}
+
 			logger.Log.WithFields(logrus.Fields{
 				"user_id":  user.ID,
 				"endpoint": "/auth/login",
 			}).Warn("Invalid TOTP code")
-			c.Error(errors.NewUnauthorizedError("Invalid TOTP code"))
+
+			if user.IsAccountLocked() {
+				message := fmt.Sprintf("Account locked due to multiple failed login attempts. Please try again in %d minutes.",
+					int(models.AccountLockoutDuration.Minutes()))
+				h.loginFailure(c, http.StatusForbidden, errors.CodeForbidden, 0, message)
+			} else {
+				h.loginFailure(c, http.StatusUnauthorized, errors.CodeUnauthorized,
+					user.RemainingLoginAttempts(), invalidCredentialsMessage())
+			}
 			return
 		}
 	}
@@ -221,6 +295,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	claims := &middleware.Claims{}
 	token, err := jwt.ParseWithClaims(req.RefreshToken, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return []byte(h.Cfg.JWTRefreshSecret), nil
 	})
 
@@ -237,6 +314,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	if !user.IsActive {
 		c.Error(errors.NewForbiddenError("User account is inactive"))
+		return
+	}
+
+	if user.IsAccountLocked() || middleware.TokenIsStale(claims, user.PasswordChangedAt) {
+		c.Error(errors.NewUnauthorizedError("Invalid or expired refresh token"))
 		return
 	}
 
@@ -257,7 +339,6 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		"refresh_token": refreshToken,
 	})
 }
-
 
 // generateSecureToken generates a cryptographically secure random token
 func generateSecureToken(length int) (string, error) {
@@ -328,6 +409,87 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "If the email exists, a password reset link has been sent",
 	})
+}
+
+// RequestUnlock sends a single-use unlock link to a locked account without
+// disclosing whether the submitted address exists or is locked.
+func (h *AuthHandler) RequestUnlock(c *gin.Context) {
+	var req RequestUnlockRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("Invalid request body", err.Error()))
+		return
+	}
+
+	limiter := middleware.GetRateLimiter(h.Cfg)
+	allowed, _, _ := limiter.IncrementAndCheck("unlock:"+c.ClientIP(), 3, time.Hour)
+	if !allowed {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many unlock requests. Please try again later."})
+		return
+	}
+
+	var user models.User
+	if err := h.DB.Where("email = ?", req.Email).First(&user).Error; err == nil &&
+		user.IsActive && user.IsAccountLocked() {
+		token, err := generateSecureToken(32)
+		if err != nil {
+			c.Error(errors.NewInternalError("Failed to generate unlock token", err))
+			return
+		}
+
+		expiresAt := time.Now().UTC().Add(models.AccountUnlockTokenTTL)
+		if err := h.DB.Model(&models.User{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+			"unlock_token_hash":       hashAccountUnlockToken(token),
+			"unlock_token_expires_at": expiresAt,
+		}).Error; err != nil {
+			c.Error(errors.NewInternalError("Failed to save unlock token", err))
+			return
+		}
+
+		go func() {
+			if err := h.EmailService.SendAccountUnlockEmail(&user, token); err != nil {
+				logger.Log.WithFields(logrus.Fields{
+					"user_id":  user.ID,
+					"endpoint": "/auth/request-unlock",
+				}).Error("Failed to send account unlock email")
+			}
+		}()
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "If the account exists and is locked, an unlock link has been sent",
+	})
+}
+
+// UnlockAccount clears lockout state after a valid unlock token is presented.
+func (h *AuthHandler) UnlockAccount(c *gin.Context) {
+	var req UnlockAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("Invalid request body", err.Error()))
+		return
+	}
+
+	var user models.User
+	if err := h.DB.Where("unlock_token_hash = ?", hashAccountUnlockToken(req.Token)).First(&user).Error; err != nil {
+		c.Error(errors.NewUnauthorizedError("Invalid or expired unlock token"))
+		return
+	}
+	if user.UnlockTokenExpiresAt == nil || time.Now().After(*user.UnlockTokenExpiresAt) {
+		c.Error(errors.NewUnauthorizedError("Invalid or expired unlock token"))
+		return
+	}
+
+	if err := h.DB.Model(&models.User{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+		"failed_login_attempts":   0,
+		"locked_until":            nil,
+		"last_failed_login_at":    nil,
+		"unlock_token_hash":       "",
+		"unlock_token_expires_at": nil,
+	}).Error; err != nil {
+		c.Error(errors.NewInternalError("Failed to unlock account", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Account unlocked successfully"})
 }
 
 // SetupMFARequest is the request to initiate MFA setup
@@ -504,12 +666,17 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	// Update password and clear reset token
+	// Update password, rotate the token invalidation boundary, and clear
+	// recovery state in a single save.
+	now := time.Now().UTC()
 	user.PasswordHash = hash
+	user.PasswordChangedAt = &now
 	user.ResetToken = ""
 	user.ResetTokenExpiresAt = nil
-	
-	// Also reset any account lockout
+	user.UnlockTokenHash = ""
+	user.UnlockTokenExpiresAt = nil
+
+	// Also reset any account lockout.
 	user.FailedLoginAttempts = 0
 	user.LockedUntil = nil
 	user.LastFailedLoginAt = nil
@@ -523,6 +690,64 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		"user_id":  user.ID,
 		"endpoint": "/auth/reset-password",
 	}).Info("Password reset successfully")
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
+}
+
+// ChangePassword updates an authenticated user's password and invalidates
+// every token issued before the change.
+func (h *AuthHandler) ChangePassword(c *gin.Context) {
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("Invalid request body", err.Error()))
+		return
+	}
+
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.Error(errors.NewUnauthorizedError("Unauthorized"))
+		return
+	}
+
+	var user models.User
+	if err := h.DB.First(&user, userID).Error; err != nil {
+		c.Error(errors.NewUnauthorizedError("User not found"))
+		return
+	}
+
+	if !models.ComparePassword(user.PasswordHash, req.CurrentPassword) {
+		c.Error(errors.NewUnauthorizedError("Invalid current password"))
+		return
+	}
+
+	hash, err := models.HashPassword(req.NewPassword)
+	if err != nil {
+		c.Error(errors.NewValidationError("Invalid password", err.Error()))
+		return
+	}
+
+	now := time.Now().UTC()
+	if err := h.DB.Model(&models.User{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+		"password_hash":           hash,
+		"password_changed_at":     now,
+		"reset_token":             "",
+		"reset_token_expires_at":  nil,
+		"unlock_token_hash":       "",
+		"unlock_token_expires_at": nil,
+		"failed_login_attempts":   0,
+		"locked_until":            nil,
+		"last_failed_login_at":    nil,
+	}).Error; err != nil {
+		c.Error(errors.NewInternalError("Failed to update password", err))
+		return
+	}
+
+	logger.Log.WithFields(logrus.Fields{
+		"user_id":  user.ID,
+		"endpoint": "/auth/change-password",
+	}).Info("Password changed successfully")
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
 }
 
 // Logout invalidates the user's current token

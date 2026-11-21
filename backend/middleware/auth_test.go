@@ -6,9 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Gpay-Remit/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/models"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"github.com/Gpay-Remit/gpay-remit/config"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestJwtAuthMiddleware(t *testing.T) {
@@ -16,6 +20,16 @@ func TestJwtAuthMiddleware(t *testing.T) {
 	cfg := &config.Config{
 		JWTSecret: "test-secret",
 	}
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}))
+	require.NoError(t, db.Create(&models.User{
+		ID:             1,
+		Email:          "jwt@example.com",
+		Name:           "JWT User",
+		StellarAddress: "GDQJUTQYK2MQX2VGDR2FYWLIYAQIEGXTQVTFEMGH6DNHFMHIDENFINJWT",
+	}).Error)
 
 	validToken, _ := GenerateToken(1, "user", cfg.JWTSecret, 1*time.Hour)
 	expiredToken, _ := GenerateToken(1, "user", cfg.JWTSecret, -1*time.Hour)
@@ -60,7 +74,7 @@ func TestJwtAuthMiddleware(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			router.Use(JwtAuthMiddleware(cfg))
+			router.Use(JwtAuthMiddleware(db, cfg))
 			router.GET("/test", func(c *gin.Context) {
 				role, _ := c.Get("role")
 				c.JSON(http.StatusOK, gin.H{"role": role})
@@ -80,6 +94,45 @@ func TestJwtAuthMiddleware(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJwtAuthMiddlewareRejectsTokensIssuedBeforePasswordChange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{JWTSecret: "test-secret"}
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}))
+
+	changedAt := time.Now().Add(2 * time.Second)
+	require.NoError(t, db.Create(&models.User{
+		ID:                2,
+		Email:             "stale@example.com",
+		Name:              "Stale Token User",
+		StellarAddress:    "GDQJUTQYK2MQX2VGDR2FYWLIYAQIEGXTQVTFEMGH6DNHFMHIDENFINSTALE",
+		PasswordChangedAt: &changedAt,
+	}).Error)
+
+	staleToken, err := GenerateToken(2, "user", cfg.JWTSecret, time.Hour)
+	require.NoError(t, err)
+
+	router := gin.New()
+	router.Use(JwtAuthMiddleware(db, cfg))
+	router.GET("/test", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+staleToken)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "StaleToken")
+}
+
+func TestTokenIsStaleRequiresIssuedAt(t *testing.T) {
+	changedAt := time.Now()
+	assert.True(t, TokenIsStale(&Claims{}, &changedAt))
+	assert.False(t, TokenIsStale(&Claims{}, nil))
 }
 
 func TestRequireRole(t *testing.T) {

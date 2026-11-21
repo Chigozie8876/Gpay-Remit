@@ -8,10 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Gpay-Remit/gpay-remit/config"
+	"github.com/Gpay-Remit/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/Gpay-Remit/gpay-remit/config"
-	"github.com/Gpay-Remit/gpay-remit/utils"
+	"gorm.io/gorm"
 )
 
 // Claims represents the JWT claims
@@ -42,8 +44,24 @@ func GenerateToken(userID uint, role string, secret string, expiry time.Duration
 	return token.SignedString([]byte(secret))
 }
 
+// TokenIsStale reports whether a token was issued at or before the user's
+// password-change boundary. NumericDate has one-second resolution, so tokens
+// minted in the same second as a password change are intentionally rejected.
+func TokenIsStale(claims *Claims, passwordChangedAt *time.Time) bool {
+	if passwordChangedAt == nil {
+		return false
+	}
+	if claims.IssuedAt == nil {
+		return true
+	}
+
+	issuedAt := claims.IssuedAt.Time.Truncate(time.Second)
+	changedAt := passwordChangedAt.Truncate(time.Second)
+	return !issuedAt.After(changedAt)
+}
+
 // JwtAuthMiddleware validates the JWT token and sets user info in the context
-func JwtAuthMiddleware(cfg *config.Config) gin.HandlerFunc {
+func JwtAuthMiddleware(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -94,6 +112,21 @@ func JwtAuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 				c.Abort()
 				return
 			}
+		}
+
+		var tokenState struct {
+			PasswordChangedAt *time.Time
+		}
+		if err := db.Model(&models.User{}).Select("password_changed_at").
+			Where("id = ?", claims.UserID).Take(&tokenState).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token", "code": "InvalidToken"})
+			c.Abort()
+			return
+		}
+		if TokenIsStale(claims, tokenState.PasswordChangedAt) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token was issued before the last password change", "code": "StaleToken"})
+			c.Abort()
+			return
 		}
 
 		// Set user information in context

@@ -12,14 +12,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/Gpay-Remit/gpay-remit/config"
 	"github.com/Gpay-Remit/gpay-remit/handlers"
 	"github.com/Gpay-Remit/gpay-remit/middleware"
 	"github.com/Gpay-Remit/gpay-remit/models"
+	"github.com/Gpay-Remit/gpay-remit/services"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -87,12 +88,13 @@ func setupRouter(db *gorm.DB) *gin.Engine {
 	router.Use(middleware.ErrorHandler())
 	router.Use(middleware.VersionMiddleware())
 
-	authHandler := handlers.NewAuthHandler(db, cfg)
+	emailService := services.NewEmailService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPFrom, cfg.EmailEnabled)
+	authHandler := handlers.NewAuthHandler(db, cfg, emailService)
 	router.POST("/api/v1/auth/register", authHandler.Register)
 	router.POST("/api/v1/auth/login", authHandler.Login)
 
 	protected := router.Group("/api/v1")
-	protected.Use(middleware.JwtAuthMiddleware(cfg))
+	protected.Use(middleware.JwtAuthMiddleware(db, cfg))
 	remittanceHandler := handlers.NewRemittanceHandler(db, cfg)
 	protected.POST("/remittances", remittanceHandler.SendRemittance)
 	protected.GET("/remittances", remittanceHandler.ListRemittances)
@@ -145,10 +147,10 @@ func TestIntegrationAuthAndPayments(t *testing.T) {
 	accessToken := registerAndLogin(t, router)
 
 	payload := map[string]any{
-		"sender_id":    1,
-		"recipient_id": 2,
-		"amount":       50.5,
-		"currency":     "USD",
+		"sender_id":       1,
+		"recipient_id":    2,
+		"amount":          50.5,
+		"currency":        "USD",
 		"target_currency": "EUR",
 	}
 	body, err := json.Marshal(payload)
@@ -208,7 +210,7 @@ func TestIntegrationStandardizedErrors(t *testing.T) {
 	require.NotEmpty(t, errPayload["message"])
 }
 
-// This integration test sets up a mock server using testcontainers 
+// This integration test sets up a mock server using testcontainers
 // to test the webhook delivery flow end-to-end.
 func TestWebhookIntegration(t *testing.T) {
 	ctx := context.Background()
@@ -249,13 +251,13 @@ func TestWebhookIntegration(t *testing.T) {
 			"statusCode": 200,
 		},
 	}
-	
+
 	expectationBytes, _ := json.Marshal(expectation)
 	http.Post(mockServerURL+"/mockserver/expectation", "application/json", bytes.NewBuffer(expectationBytes))
 
 	payload := map[string]string{"status": "success", "tx_id": "12345"}
 	payloadBytes, _ := json.Marshal(payload)
-	
+
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Post(mockServerURL+"/webhook", "application/json", bytes.NewBuffer(payloadBytes))
 	if err != nil {

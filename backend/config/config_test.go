@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,17 +100,22 @@ func validTestConfig() *Config {
 		HorizonURL:        "https://horizon-testnet.stellar.org",
 		JWTSecret:         "a-valid-32-plus-character-secret-value",
 		JWTRefreshSecret:  "another-valid-32-plus-character-secret",
-		PlatformFeeBps:   50,
-		ForexFeeBps:      25,
-		ComplianceFeeBps: 10,
-		NetworkFeeBps:    15,
-		MinFee:           0,
-		MaxFee:           100,
+		PlatformFeeBps:    50,
+		ForexFeeBps:       25,
+		ComplianceFeeBps:  10,
+		NetworkFeeBps:     15,
+		MinFee:            0,
+		MaxFee:            100,
 		DBMaxIdleConns:    10,
 		DBMaxOpenConns:    100,
 		DBConnMaxLifetime: 60 * 60 * 1000000000,
 		EmailEnabled:      false,
 		RedisDB:           0,
+
+		CORSAllowedOrigins: []string{"http://localhost:3000"},
+		CORSAllowedMethods: []string{"GET", "POST", "OPTIONS"},
+		CORSAllowedHeaders: []string{"Content-Type", "Authorization"},
+		CORSMaxAge:         10 * 60 * 1000000000,
 	}
 }
 
@@ -224,4 +230,104 @@ func TestJWTSelfTest_Success(t *testing.T) {
 func TestJWTSelfTest_EmptySecretFails(t *testing.T) {
 	err := validateJWTSelfTest("")
 	assert.Error(t, err)
+}
+
+func TestConfig_Validate_CORSOrigins(t *testing.T) {
+	tests := []struct {
+		name   string
+		origin string
+		errMsg string
+	}{
+		{name: "https origin", origin: "https://app.example.com"},
+		{name: "localhost http origin", origin: "http://localhost:5173"},
+		{name: "wildcard", origin: "*", errMsg: "explicit origin"},
+		{name: "remote http origin", origin: "http://example.com", errMsg: "localhost"},
+		{name: "origin with path", origin: "https://app.example.com/callback", errMsg: "scheme and host"},
+		{name: "origin with wildcard subdomain", origin: "https://*.example.com", errMsg: "explicit origin"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.CORSAllowedOrigins = []string{tt.origin}
+			err := cfg.Validate()
+			if tt.errMsg == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMsg)
+		})
+	}
+}
+
+func TestConfig_Validate_CORSRequiresExplicitSettings(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.CORSAllowedOrigins = nil
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CORS_ALLOWED_ORIGINS must contain at least one origin")
+
+	cfg = validTestConfig()
+	cfg.CORSAllowedMethods = nil
+	err = cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CORS_ALLOWED_METHODS must contain at least one method")
+
+	cfg = validTestConfig()
+	cfg.CORSAllowedHeaders = nil
+	err = cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CORS_ALLOWED_HEADERS must contain at least one header")
+
+	cfg = validTestConfig()
+	cfg.CORSMaxAge = 0
+	err = cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CORS_MAX_AGE must be positive")
+}
+
+func TestConfig_Validate_RejectsWildcardWithCredentials(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.CORSAllowCredentials = true
+	cfg.CORSExposedHeaders = []string{"*"}
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "wildcard CORS values cannot be combined with credentials")
+}
+
+func TestConfig_CORSConfigKeepsExplicitOrigins(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.CORSAllowCredentials = true
+
+	corsCfg := cfg.CORSConfig()
+	assert.Equal(t, cfg.CORSAllowedOrigins, corsCfg.AllowOrigins)
+	assert.Equal(t, cfg.CORSAllowedMethods, corsCfg.AllowMethods)
+	assert.Equal(t, cfg.CORSAllowedHeaders, corsCfg.AllowHeaders)
+	assert.Equal(t, cfg.CORSExposedHeaders, corsCfg.ExposeHeaders)
+	assert.True(t, corsCfg.AllowCredentials)
+	assert.Equal(t, cfg.CORSMaxAge, corsCfg.MaxAge)
+	assert.NotContains(t, corsCfg.AllowOrigins, "*")
+}
+
+func TestLoadConfig_CORSDefaultsAreExplicit(t *testing.T) {
+	clearJWTEnv(t)
+	t.Setenv("JWT_SECRET", "a-valid-32-plus-character-secret-value")
+	t.Setenv("JWT_REFRESH_SECRET", "another-valid-32-plus-character-secret")
+	t.Setenv("CORS_ALLOWED_ORIGINS", "")
+	t.Setenv("CORS_ALLOWED_METHODS", "")
+	t.Setenv("CORS_ALLOWED_HEADERS", "")
+	t.Setenv("CORS_EXPOSED_HEADERS", "")
+	t.Setenv("CORS_ALLOW_CREDENTIALS", "")
+	t.Setenv("CORS_MAX_AGE", "")
+
+	cfg, err := LoadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"http://localhost:3000"}, cfg.CORSAllowedOrigins)
+	assert.Equal(t, []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}, cfg.CORSAllowedMethods)
+	assert.Contains(t, cfg.CORSAllowedHeaders, "Authorization")
+	assert.Contains(t, cfg.CORSExposedHeaders, "X-RateLimit-Remaining")
+	assert.False(t, cfg.CORSAllowCredentials)
+	assert.Equal(t, 10*time.Minute, cfg.CORSMaxAge)
 }

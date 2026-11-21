@@ -1,16 +1,19 @@
 package config
 
 import (
-	"github.com/golang-jwt/jwt/v5"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gin-contrib/cors"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -62,6 +65,7 @@ func StopConnectionPoolMonitor() {
 	cancel()
 	<-done
 }
+
 type Config struct {
 	Port              string
 	Environment       string
@@ -118,8 +122,16 @@ type Config struct {
 	// development and integration testing. Controlled by the
 	// SANDBOX_MODE environment variable.
 	SandboxMode bool
-}
 
+	// CORS is configured with explicit origins; credentials are only sent
+	// to exact origins listed in CORS_ALLOWED_ORIGINS.
+	CORSAllowedOrigins   []string
+	CORSAllowedMethods   []string
+	CORSAllowedHeaders   []string
+	CORSExposedHeaders   []string
+	CORSAllowCredentials bool
+	CORSMaxAge           time.Duration
+}
 
 // validateJWTSelfTest signs and verifies a test JWT token to ensure the key is functional at startup (#333).
 func validateJWTSelfTest(secret string) error {
@@ -188,6 +200,16 @@ func LoadConfig() (*Config, error) {
 	}
 
 	sandbox := getEnvOrDefault("SANDBOX_MODE", "false") == "true"
+
+	corsAllowedOrigins := getEnvAsCSV("CORS_ALLOWED_ORIGINS", []string{"http://localhost:3000"})
+	corsAllowedMethods := getEnvAsCSV("CORS_ALLOWED_METHODS", []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
+	corsAllowedHeaders := getEnvAsCSV("CORS_ALLOWED_HEADERS", []string{
+		"Content-Type", "Authorization", "X-API-Version", "Accept-Version",
+		"X-CSRF-Token", "X-Request-ID", "X-Correlation-ID",
+	})
+	corsExposedHeaders := getEnvAsCSV("CORS_EXPOSED_HEADERS", []string{
+		"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset",
+	})
 
 	// When sandbox mode is active, apply testnet-friendly defaults that
 	// differ from production. Individual env vars still take precedence
@@ -263,6 +285,13 @@ func LoadConfig() (*Config, error) {
 		ExchangeRateCacheTTL: getEnvAsDuration("EXCHANGE_RATE_CACHE_TTL", 60*time.Second),
 
 		SandboxMode: sandbox,
+
+		CORSAllowedOrigins:   corsAllowedOrigins,
+		CORSAllowedMethods:   corsAllowedMethods,
+		CORSAllowedHeaders:   corsAllowedHeaders,
+		CORSExposedHeaders:   corsExposedHeaders,
+		CORSAllowCredentials: getEnvOrDefault("CORS_ALLOW_CREDENTIALS", "false") == "true",
+		CORSMaxAge:           getEnvAsDuration("CORS_MAX_AGE", 10*time.Minute),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -388,8 +417,78 @@ func (c *Config) Validate() error {
 		errs = append(errs, "REDIS_DB must be non-negative")
 	}
 
+	// 10. CORS Configuration
+	if len(c.CORSAllowedOrigins) == 0 {
+		errs = append(errs, "CORS_ALLOWED_ORIGINS must contain at least one origin")
+	}
+	for _, origin := range c.CORSAllowedOrigins {
+		if err := validateCORSOrigin(origin); err != nil {
+			errs = append(errs, fmt.Sprintf("CORS_ALLOWED_ORIGINS contains invalid origin %q: %v", origin, err))
+		}
+	}
+	if len(c.CORSAllowedMethods) == 0 {
+		errs = append(errs, "CORS_ALLOWED_METHODS must contain at least one method")
+	}
+	if len(c.CORSAllowedHeaders) == 0 {
+		errs = append(errs, "CORS_ALLOWED_HEADERS must contain at least one header")
+	}
+	if c.CORSMaxAge <= 0 {
+		errs = append(errs, "CORS_MAX_AGE must be positive")
+	}
+	if c.CORSAllowCredentials {
+		corsValues := make([]string, 0, len(c.CORSAllowedOrigins)+len(c.CORSAllowedMethods)+len(c.CORSAllowedHeaders)+len(c.CORSExposedHeaders))
+		corsValues = append(corsValues, c.CORSAllowedOrigins...)
+		corsValues = append(corsValues, c.CORSAllowedMethods...)
+		corsValues = append(corsValues, c.CORSAllowedHeaders...)
+		corsValues = append(corsValues, c.CORSExposedHeaders...)
+		for _, value := range corsValues {
+			if value == "*" {
+				errs = append(errs, "wildcard CORS values cannot be combined with credentials")
+				break
+			}
+		}
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation failed with %d error(s):\n  - %s", len(errs), strings.Join(errs, "\n  - "))
+	}
+	return nil
+}
+
+// CORSConfig builds the gin-contrib/cors configuration from validated config
+// values. Wildcards and origin functions are deliberately never used.
+func (c *Config) CORSConfig() cors.Config {
+	return cors.Config{
+		AllowOrigins:     c.CORSAllowedOrigins,
+		AllowMethods:     c.CORSAllowedMethods,
+		AllowHeaders:     c.CORSAllowedHeaders,
+		ExposeHeaders:    c.CORSExposedHeaders,
+		AllowCredentials: c.CORSAllowCredentials,
+		MaxAge:           c.CORSMaxAge,
+	}
+}
+
+func validateCORSOrigin(origin string) error {
+	if origin == "" || origin == "*" || strings.Contains(origin, "*") {
+		return errors.New("must be an explicit origin")
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New("origin must use http or https")
+	}
+	if parsed.Host == "" || parsed.User != nil || parsed.Opaque != "" ||
+		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("origin must contain only a scheme and host")
+	}
+	if parsed.Scheme == "http" {
+		host := parsed.Hostname()
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			return errors.New("http origins are only allowed for localhost")
+		}
 	}
 	return nil
 }
@@ -453,34 +552,34 @@ func MonitorConnectionPool(ctx context.Context, db *sql.DB) {
 		case <-ticker.C:
 			stats := db.Stats()
 
-		// Log connection pool metrics
-		logger.Log.WithFields(map[string]interface{}{
-			"open_connections":  stats.OpenConnections,
-			"in_use":             stats.InUse,
-			"idle":               stats.Idle,
-			"wait_count":         stats.WaitCount,
-			"wait_duration_ms":   stats.WaitDuration.Milliseconds(),
-			"max_idle_closed":    stats.MaxIdleClosed,
-			"max_lifetime_closed": stats.MaxLifetimeClosed,
-		}).Debug("Database connection pool stats")
-
-		// Alert if connections are running low
-		if stats.OpenConnections >= 80 {
+			// Log connection pool metrics
 			logger.Log.WithFields(map[string]interface{}{
-				"open_connections": stats.OpenConnections,
-				"in_use":           stats.InUse,
-				"threshold":        "80%",
-			}).Warn("Database connection pool nearing capacity")
-		}
+				"open_connections":    stats.OpenConnections,
+				"in_use":              stats.InUse,
+				"idle":                stats.Idle,
+				"wait_count":          stats.WaitCount,
+				"wait_duration_ms":    stats.WaitDuration.Milliseconds(),
+				"max_idle_closed":     stats.MaxIdleClosed,
+				"max_lifetime_closed": stats.MaxLifetimeClosed,
+			}).Debug("Database connection pool stats")
 
-		// Alert if wait queue is building up
-		if stats.WaitCount > 0 {
-			logger.Log.WithFields(map[string]interface{}{
-				"wait_count":     stats.WaitCount,
-				"wait_duration":  stats.WaitDuration.Seconds(),
-				"connections":   stats.OpenConnections,
-			}).Warn("Queries waiting for database connections")
-		}
+			// Alert if connections are running low
+			if stats.OpenConnections >= 80 {
+				logger.Log.WithFields(map[string]interface{}{
+					"open_connections": stats.OpenConnections,
+					"in_use":           stats.InUse,
+					"threshold":        "80%",
+				}).Warn("Database connection pool nearing capacity")
+			}
+
+			// Alert if wait queue is building up
+			if stats.WaitCount > 0 {
+				logger.Log.WithFields(map[string]interface{}{
+					"wait_count":    stats.WaitCount,
+					"wait_duration": stats.WaitDuration.Seconds(),
+					"connections":   stats.OpenConnections,
+				}).Warn("Queries waiting for database connections")
+			}
 		}
 	}
 }
@@ -490,6 +589,22 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getEnvAsCSV(key string, defaultValue []string) []string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func getEnvAsInt(key string, defaultValue int) int {
