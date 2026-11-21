@@ -822,7 +822,7 @@ fn test_multiplication_overflow_in_conversions() {
     client.set_platform_fee(&admin, &10000); // 100%
     client.set_processing_fee(&admin, &10000); // 100%
     client.set_forex_fee(&admin, &10000); // 100%
-    client.set_compliance_fee(&admin, &i128::MAX); // Maximum flat fee
+    client.set_compliance_fee(&admin, &10000); // max allowed (bps)
 
     // Try to get fee breakdown with maximum amount
     let result = client.try_get_fee_breakdown(&i128::MAX);

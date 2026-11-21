@@ -28,9 +28,15 @@ jobs:
             contracts/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
 
-      - name: Run contract tests
+      # --all-features also compiles and runs the feature-gated suites
+      # (`prop` -> tests/prop_conditions.rs, `integration` ->
+      # tests/integration_remittance.rs). tests/fuzz_*.rs are proptest-based
+      # and run on every `cargo test`.
+      - name: Run contract tests (all features, incl. property/fuzz tests)
         working-directory: ./contracts
-        run: cargo test --locked
+        env:
+          PROPTEST_CASES: "256"
+        run: cargo test --locked --all-features --no-fail-fast
 
   test-backend:
     name: Test Backend

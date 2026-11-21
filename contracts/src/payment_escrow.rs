@@ -919,6 +919,15 @@ impl PaymentEscrowContract {
         Map::new(env)
     }
 
+    /// Treasury that receives protocol fees: the configured fee wallet, or the
+    /// admin when no fee wallet has been set.
+    fn fee_destination(env: &Env, admin: &Address) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::FeeWallet)
+            .unwrap_or(admin.clone())
+    }
+
     fn calculate_fees(env: &Env, amount: i128) -> Result<FeeBreakdown, Error> {
         let platform_percentage = env
             .storage()
@@ -2548,12 +2557,9 @@ impl PaymentEscrowContract {
             return Err(Error::InsufficientFunds);
         }
 
-        let fee_percentage = Self::get_platform_fee(env.clone());
-        let fee_amount = available_amount
-            .checked_mul(fee_percentage)
-            .ok_or(Error::ArithmeticOverflow)?
-            .checked_div(10000)
-            .ok_or(Error::ArithmeticOverflow)?;
+        // Full on-chain fee structure (platform + forex + compliance + network,
+        // clamped to min/max) so it matches the backend `FeeService`.
+        let fee_amount = Self::calculate_fees(&env, available_amount)?.total_fee;
 
         let recipient_amount = available_amount
             .checked_sub(fee_amount)
@@ -2569,7 +2575,7 @@ impl PaymentEscrowContract {
         token_client.transfer(&contract_address, &escrow.recipient, &recipient_amount);
 
         if fee_amount > 0 {
-            token_client.transfer(&contract_address, &stored_admin, &fee_amount);
+            token_client.transfer(&contract_address, &Self::fee_destination(&env, &stored_admin), &fee_amount);
         }
 
         escrow.released_amount = escrow
@@ -2696,7 +2702,7 @@ impl PaymentEscrowContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&contract_address, &escrow.recipient, &recipient_amount);
         if fee_breakdown.total_fee > 0 {
-            token_client.transfer(&contract_address, &stored_admin, &fee_breakdown.total_fee);
+            token_client.transfer(&contract_address, &Self::fee_destination(&env, &stored_admin), &fee_breakdown.total_fee);
         }
 
         escrow.released_amounts.set(asset.clone(), deposited);
@@ -2850,12 +2856,9 @@ impl PaymentEscrowContract {
             return Err(Error::InsufficientFunds);
         }
 
-        let fee_percentage = Self::get_platform_fee(env.clone());
-        let fee_amount = release_amount
-            .checked_mul(fee_percentage)
-            .ok_or(Error::ArithmeticOverflow)?
-            .checked_div(10000)
-            .ok_or(Error::ArithmeticOverflow)?;
+        // Full on-chain fee structure (platform + forex + compliance + network,
+        // clamped to min/max) so it matches the backend `FeeService`.
+        let fee_amount = Self::calculate_fees(&env, release_amount)?.total_fee;
 
         let recipient_amount = release_amount
             .checked_sub(fee_amount)
@@ -2867,7 +2870,7 @@ impl PaymentEscrowContract {
         token_client.transfer(&contract_address, &escrow.recipient, &recipient_amount);
 
         if fee_amount > 0 {
-            token_client.transfer(&contract_address, &stored_admin, &fee_amount);
+            token_client.transfer(&contract_address, &Self::fee_destination(&env, &stored_admin), &fee_amount);
         }
 
         escrow.released_amount = escrow
@@ -3320,7 +3323,7 @@ impl PaymentEscrowContract {
             token_client.transfer(&contract_address, &escrow.sender, &refund_amount);
 
             if processing_fee > 0 {
-                token_client.transfer(&contract_address, &stored_admin, &processing_fee);
+                token_client.transfer(&contract_address, &Self::fee_destination(&env, &stored_admin), &processing_fee);
             }
         }
 
@@ -3464,7 +3467,7 @@ impl PaymentEscrowContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&contract_address, &escrow.sender, &refund_amount);
         if processing_fee > 0 {
-            token_client.transfer(&contract_address, &stored_admin, &processing_fee);
+            token_client.transfer(&contract_address, &Self::fee_destination(&env, &stored_admin), &processing_fee);
         }
 
         escrow.refunded_amounts.set(
@@ -3640,7 +3643,7 @@ impl PaymentEscrowContract {
         token_client.transfer(&contract_address, &escrow.sender, &net_refund);
 
         if processing_fee > 0 {
-            token_client.transfer(&contract_address, &stored_admin, &processing_fee);
+            token_client.transfer(&contract_address, &Self::fee_destination(&env, &stored_admin), &processing_fee);
         }
 
         escrow.refunded_amount = escrow
@@ -6238,7 +6241,7 @@ mod test {
 
         let expected_platform = 1000 * 250 / 10000;
         let expected_forex = 1000 * 100 / 10000;
-        let expected_compliance = 10;
+        let expected_compliance = 1000 * 10 / 10000; // compliance fee is in bps
         let expected_total = expected_platform + expected_forex + expected_compliance;
 
         assert_eq!(breakdown.platform_fee, expected_platform);

@@ -63,3 +63,6 @@ logs/
 
 # OS
 Thumbs.db
+
+# contracts is a cdylib application crate: commit its lockfile so CI (--locked) is reproducible
+!contracts/Cargo.lock

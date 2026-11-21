@@ -83,9 +83,9 @@ fn test_fee_transfer_to_fee_wallet() {
     // Check recipient received correct amount
     assert_eq!(token.balance(&recipient), expected_recipient_amount);
 
-    // Check fee wallet received the fee (admin gets fee if no fee wallet set, but we set one)
-    // Note: Current implementation sends to admin, not fee_wallet
-    assert_eq!(token.balance(&admin), expected_fee);
+    // The configured fee wallet (treasury) receives the fee, not the admin.
+    assert_eq!(token.balance(&fee_wallet), expected_fee);
+    assert_eq!(token.balance(&admin), 0);
 }
 
 // Test fee calculation matches fee structure
@@ -141,17 +141,16 @@ fn test_multiple_fee_types() {
 
     client.deposit(&escrow_id, &sender, &amount, &token.address);
 
-    // Note: release_escrow currently only applies platform_fee, not full breakdown
-    // Platform fee: 10000 * 2% = 200
-    let expected_fee = 200;
+    // release_escrow charges the full breakdown: platform 2% + forex 1% + compliance 0.5%
+    let expected_fee = 350;
 
     client.release_escrow(&escrow_id, &recipient, &token.address);
 
-    // Recipient should receive amount minus platform fee
+    // Recipient should receive amount minus the total fee
     let expected_recipient = amount - expected_fee;
     assert_eq!(token.balance(&recipient), expected_recipient);
 
-    // Admin should receive the platform fee
+    // Admin (no fee wallet configured) should receive the total fee
     assert_eq!(token.balance(&admin), expected_fee);
 
     // Verify fee breakdown calculation includes all fees
@@ -263,9 +262,11 @@ fn test_fee_wallet_changes() {
     client.deposit(&escrow_id2, &sender, &amount, &token.address);
     client.release_escrow(&escrow_id2, &recipient, &token.address);
 
-    // Both should have received fees (currently goes to admin)
+    // Each release pays the wallet that is configured at release time.
     let expected_fee = 500;
-    assert_eq!(token.balance(&admin), expected_fee * 2);
+    assert_eq!(token.balance(&fee_wallet1), expected_fee);
+    assert_eq!(token.balance(&fee_wallet2), expected_fee);
+    assert_eq!(token.balance(&admin), 0);
 }
 
 // Test zero fee configuration
@@ -307,11 +308,10 @@ fn test_fee_exceeds_amount() {
     let amount = 100;
 
     // Set fees that would exceed the amount
-    client.set_platform_fee(&admin, &5000); // 50%
+    client.set_platform_fee(&admin, &6000); // 60%
     client.set_forex_fee(&admin, &5000); // 50%
-    client.set_compliance_fee(&admin, &50); // Flat 50
 
-    // This should fail because total fee >= amount
+    // This should fail because total fee (110%) > amount
     let result = client.try_get_fee_breakdown(&amount);
     assert_eq!(result, Err(Ok(Error::FeeExceedsAmount)));
 }

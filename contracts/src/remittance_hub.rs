@@ -160,6 +160,11 @@ pub enum DataKey {
     MetricWeekly(MetricType, u64),
     MaxBatchSize,
     FeeConfig,
+    /// Address that receives protocol fees collected on release.
+    Treasury,
+    /// Fee charged when escrow `id` was funded (so a later fee-rate change
+    /// cannot make release over- or under-pay).
+    EscrowFee(u64),
 }
 
 #[derive(Clone)]
@@ -414,6 +419,47 @@ impl RemittanceHubContract {
         env.storage().persistent().get(&DataKey::FeeConfig)
     }
 
+    /// Set the treasury that receives fees on escrow release. Admin-only.
+    pub fn set_treasury(
+        env: Env,
+        admin: Address,
+        treasury: Address,
+    ) -> Result<(), RemittanceError> {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .ok_or(RemittanceError::Unauthorized)?;
+        if admin != stored_admin {
+            return Err(RemittanceError::Unauthorized);
+        }
+        env.storage().persistent().set(&DataKey::Treasury, &treasury);
+
+        events::emit(
+            &env,
+            symbol_short!("hub"),
+            symbol_short!("treasury"),
+            0,
+            &admin,
+            0,
+            symbol_short!("na"),
+            EventData::AddressAction(symbol_short!("treasury"), treasury),
+        );
+        Ok(())
+    }
+
+    /// Configured fee treasury, if any (the admin is used when unset).
+    pub fn get_treasury(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::Treasury)
+    }
+
+    /// Quote the on-chain fee for `amount` using the current fee config.
+    /// Matches the backend `FeeService` (basis points, clamped to min/max).
+    pub fn get_fee(env: Env, amount: i128) -> i128 {
+        Self::calculate_fee(&env, amount)
+    }
+
     fn calculate_fee(env: &Env, amount: i128) -> i128 {
         let config: FeeConfig = env.storage().persistent().get(&DataKey::FeeConfig).unwrap_or(FeeConfig {
             percentage: 250,
@@ -421,11 +467,18 @@ impl RemittanceHubContract {
             max_fee: i128::MAX,
         });
 
-        let mut fees = amount
+        // floor(amount * pct / 10000) without intermediate overflow. On overflow
+        // saturate (then clamp to max_fee) rather than returning 0, which would
+        // let very large amounts bypass fees entirely.
+        let mut fees = (amount / 10000)
             .checked_mul(config.percentage)
-            .unwrap_or(0)
-            .checked_div(10000)
-            .unwrap_or(0);
+            .and_then(|hi| {
+                (amount % 10000)
+                    .checked_mul(config.percentage)
+                    .map(|lo| lo / 10000)
+                    .and_then(|lo| hi.checked_add(lo))
+            })
+            .unwrap_or(i128::MAX);
 
         if fees < config.min_fee {
             fees = config.min_fee;
@@ -846,7 +899,6 @@ impl RemittanceHubContract {
                     issuer: invoice.asset.issuer.clone(),
                 },
                 amount,
-                total_due,
             ),
         );
 
@@ -1173,6 +1225,9 @@ impl RemittanceHubContract {
             env.storage()
                 .persistent()
                 .set(&DataKey::Escrow(id), &escrow);
+            env.storage()
+                .persistent()
+                .set(&DataKey::EscrowFee(id), &fees);
         }
 
         let total_transfer = total_amount
@@ -1237,6 +1292,26 @@ impl RemittanceHubContract {
                 .set(&DataKey::Escrow(id), &escrow);
 
             token_client.transfer(&contract_address, &escrow.recipient, &escrow.amount);
+
+            // Forward the fee collected at deposit to the treasury (admin if unset).
+            let fee: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::EscrowFee(id))
+                .unwrap_or(0);
+            if fee > 0 {
+                let treasury: Option<Address> = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::Treasury)
+                    .or_else(|| env.storage().persistent().get(&DataKey::Admin));
+                // With neither a treasury nor an admin (uninitialised hub) the
+                // fee simply stays in the contract.
+                if let Some(treasury) = treasury {
+                    token_client.transfer(&contract_address, &treasury, &fee);
+                    env.storage().persistent().remove(&DataKey::EscrowFee(id));
+                }
+            }
         }
 
         events::emit(
@@ -1425,6 +1500,41 @@ impl RemittanceHubContract {
     ) -> Result<(), upgradeable::UpgradeError> {
         Self::check_upgrade_admin(&env, &admin)?;
         upgradeable::upgrade(&env, &admin, new_wasm_hash)
+    }
+
+    /// Upgrade to an explicit `target_version`; must equal `version() + 1`.
+    /// Admin-only.
+    pub fn upgrade_to(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+        target_version: u32,
+    ) -> Result<(), upgradeable::UpgradeError> {
+        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        if admin != stored_admin {
+            return Err(upgradeable::UpgradeError::Unauthorized);
+        }
+        upgradeable::upgrade_to(&env, &admin, new_wasm_hash, target_version)
+    }
+
+    /// Abort a pending (not yet migrated) upgrade and restore the previous
+    /// version. Admin-only.
+    pub fn rollback(env: Env, admin: Address) -> Result<u32, upgradeable::UpgradeError> {
+        let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        if admin != stored_admin {
+            return Err(upgradeable::UpgradeError::Unauthorized);
+        }
+        upgradeable::rollback(&env, &admin)
+    }
+
+    /// Version of the stored data layout (trails `version()` until `migrate`).
+    pub fn migration_version(env: Env) -> u32 {
+        upgradeable::get_migration_version(&env)
+    }
+
+    /// `true` if an upgrade is awaiting `migrate` or `rollback`.
+    pub fn is_migration_pending(env: Env) -> bool {
+        upgradeable::is_migration_pending(&env)
     }
 
     /// Finalize migration after an upgrade. Admin-only.
@@ -2763,7 +2873,7 @@ mod test {
         let contract_id = env.register_contract(None, RemittanceHubContract);
         let client = RemittanceHubContractClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.init_hub(&admin);
+        client.init_hub(&admin, &admin, &admin, &300);
 
         let config = FeeConfig {
             percentage: 300,
