@@ -65,6 +65,7 @@ func main() {
 	router.Use(middleware.VersionMiddleware())
 	router.Use(middleware.TLSMiddleware())
 	router.Use(middleware.CSRFProtection())
+	router.Use(middleware.SecurityHeadersMiddleware())
 
 	registerRoutes(router, db, cfg)
 

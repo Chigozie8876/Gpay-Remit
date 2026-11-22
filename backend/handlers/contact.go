@@ -79,6 +79,12 @@ func (h *ContactHandler) CreateContact(c *gin.Context) {
 		return
 	}
 
+	var existingContact models.Contact
+	if err := h.db.Where("user_id = ? AND stellar_address = ?", userID.(uint), contact.StellarAddress).First(&existingContact).Error; err == nil {
+		c.Error(errors.NewConflictError("A contact with this Stellar address already exists for your account"))
+		return
+	}
+
 	// Verify Stellar address on-chain if stellar client available
 	if h.stellarClient != nil {
 		if err := h.stellarClient.ValidateAccount(c.Request.Context(), contact.StellarAddress); err == nil {
@@ -177,8 +183,15 @@ func (h *ContactHandler) UpdateContact(c *gin.Context) {
 		contact.Nickname = strings.TrimSpace(req.Nickname)
 	}
 	if req.StellarAddress != "" {
-		contact.StellarAddress = strings.TrimSpace(req.StellarAddress)
-		// re-validate address
+		newAddress := strings.TrimSpace(req.StellarAddress)
+		if newAddress != contact.StellarAddress {
+			var existingContact models.Contact
+			if err := h.db.Where("user_id = ? AND stellar_address = ?", userID.(uint), newAddress).First(&existingContact).Error; err == nil {
+				c.Error(errors.NewConflictError("A contact with this Stellar address already exists for your account"))
+				return
+			}
+		}
+		contact.StellarAddress = newAddress
 		if err := contact.Validate(); err != nil {
 			c.Error(errors.NewValidationError(err.Error(), nil))
 			return

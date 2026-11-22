@@ -357,6 +357,19 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
+	limiter := middleware.GetRateLimiter(h.Cfg)
+	allowed, _, _ := limiter.IncrementAndCheck("forgot-password:"+req.Email, 3, time.Hour)
+	if !allowed {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many password reset requests. Please try again later."})
+		return
+	}
+
+	ipAllowed, _, _ := limiter.IncrementAndCheck("forgot-password-ip:"+c.ClientIP(), 5, time.Hour)
+	if !ipAllowed {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many password reset requests from this IP. Please try again later."})
+		return
+	}
+
 	var user models.User
 	if err := h.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
 		// Don't reveal if email exists or not (security best practice)
