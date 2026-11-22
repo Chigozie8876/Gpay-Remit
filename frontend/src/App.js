@@ -2,6 +2,7 @@
 import React, { useState, useEffect, createContext } from "react";
 import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
 import RemittanceForm from "./components/RemittanceForm";
+import PaymentTemplates from "./components/PaymentTemplates";
 import InvoiceViewer from "./components/InvoiceViewer";
 import ErrorBoundary from "./components/ErrorBoundary";
 import TransactionHistory from "./pages/TransactionHistory";
@@ -119,6 +120,7 @@ function App() {
               {/* #116 — nav landmark so screen readers can jump straight to navigation */}
               <nav aria-label="Main navigation">
                 <Link to="/">{t.send}</Link>
+                <Link to="/templates">{t.templates}</Link>
                 <Link to="/invoices">{t.invoices}</Link>
                 <Link to="/transactions">{t.history}</Link>
               </nav>
@@ -137,6 +139,7 @@ function App() {
               <main id="main-content" aria-label="Page content" tabIndex="-1">
                 <Routes>
                   <Route path="/" element={<RemittanceForm />} />
+                  <Route path="/templates" element={<PaymentTemplates />} />
                   <Route path="/invoices" element={<InvoiceViewer />} />
                   <Route path="/transactions" element={<TransactionHistory />} />
                 </Routes>

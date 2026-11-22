@@ -107,6 +107,15 @@ export const getInvoices = (config = {}) => api.get("/invoices", config);
 export const getExchangeRate = (from, to, config = {}) =>
   api.get(`/exchange-rates?from=${from}&to=${to}`, config);
 
+// ── Payment Templates ───────────────────────────────────────────────────
+export const getTemplates = (page = 1, pageSize = 20, config = {}) =>
+  api.get(`/templates?page=${page}&page_size=${pageSize}`, config);
+export const createTemplate = (data, config = {}) => api.post("/templates", data, config);
+export const updateTemplate = (id, data, config = {}) => api.put(`/templates/${id}`, data, config);
+export const deleteTemplate = (id, config = {}) => api.delete(`/templates/${id}`, config);
+export const sendFromTemplate = (id, config = {}) => api.post(`/templates/${id}/send`, {}, config);
+export const calculateFee = (amount, config = {}) => api.get(`/fees/calculate?amount=${amount}`, config);
+
 // ── Auth & 2FA ──────────────────────────────────────────────────────────
 export const register = (data) => api.post("/auth/register", data);
 export const login = (data) => api.post("/auth/login", data);

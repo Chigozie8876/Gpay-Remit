@@ -1711,6 +1711,145 @@ paths:
         '403':
           description: Sender account does not belong to authenticated user
 
+  /templates:
+    get:
+      tags: [Remittances]
+      summary: List payment templates for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of payment templates
+        '401':
+          description: Unauthorized
+    post:
+      tags: [Remittances]
+      summary: Create a payment template
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_name, recipient_account, amount, asset_code]
+              properties:
+                template_name:
+                  type: string
+                recipient_account:
+                  type: string
+                amount:
+                  type: number
+                asset_code:
+                  type: string
+                asset_issuer:
+                  type: string
+                notes:
+                  type: string
+      responses:
+        '201':
+          description: Template created
+        '400':
+          description: Validation error
+        '401':
+          description: Unauthorized
+
+  /templates/{id}:
+    get:
+      tags: [Remittances]
+      summary: Get a payment template by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Payment template
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found
+    put:
+      tags: [Remittances]
+      summary: Update a payment template
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Template updated
+        '400':
+          description: Validation error
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found
+    delete:
+      tags: [Remittances]
+      summary: Delete a payment template
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Template deleted
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found
+
+  /templates/{id}/send:
+    post:
+      tags: [Remittances]
+      summary: Send a remittance from a payment template
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '201':
+          description: Remittance created from template
+        '400':
+          description: Validation error
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found
+
   /health:
     servers:
       - url: http://localhost:8080

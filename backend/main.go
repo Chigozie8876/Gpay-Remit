@@ -206,6 +206,14 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.GET("/remittances", remittanceHandler.ListRemittances)
 			protected.POST("/remittances/:id/complete", middleware.RequireRole("admin"), remittanceHandler.CompleteRemittance)
 
+			templateHandler := handlers.NewPaymentTemplateHandler(db, cfg, utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase))
+			protected.POST("/templates", templateHandler.CreateTemplate)
+			protected.GET("/templates", templateHandler.ListTemplates)
+			protected.GET("/templates/:id", templateHandler.GetTemplate)
+			protected.PUT("/templates/:id", templateHandler.UpdateTemplate)
+			protected.DELETE("/templates/:id", templateHandler.DeleteTemplate)
+			protected.POST("/templates/:id/send", templateHandler.SendFromTemplate)
+
 			protected.POST("/invoices", remittanceHandler.CreateInvoice)
 			protected.GET("/invoices", remittanceHandler.ListInvoices)
 			protected.GET("/invoices/:id", remittanceHandler.GetInvoice)
@@ -305,6 +313,14 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.GET("/remittances/:id", remittanceHandler.GetRemittance)
 			protected.GET("/remittances", remittanceHandler.ListRemittances)
 			protected.POST("/remittances/:id/complete", middleware.RequireRole("admin"), remittanceHandler.CompleteRemittance)
+
+			templateHandler := handlers.NewPaymentTemplateHandler(db, cfg, utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase))
+			protected.POST("/templates", templateHandler.CreateTemplate)
+			protected.GET("/templates", templateHandler.ListTemplates)
+			protected.GET("/templates/:id", templateHandler.GetTemplate)
+			protected.PUT("/templates/:id", templateHandler.UpdateTemplate)
+			protected.DELETE("/templates/:id", templateHandler.DeleteTemplate)
+			protected.POST("/templates/:id/send", templateHandler.SendFromTemplate)
 
 			protected.POST("/invoices", remittanceHandler.CreateInvoice)
 			protected.GET("/invoices", remittanceHandler.ListInvoices)
