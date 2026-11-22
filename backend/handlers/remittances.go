@@ -8,27 +8,33 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Gpay-Remit/gpay-remit/config"
 	"github.com/Gpay-Remit/gpay-remit/errors"
 	"github.com/Gpay-Remit/gpay-remit/middleware"
 	"github.com/Gpay-Remit/gpay-remit/models"
 	"github.com/Gpay-Remit/gpay-remit/services"
 	"github.com/Gpay-Remit/gpay-remit/utils"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type RemittanceHandler struct {
 	db            *gorm.DB
+	readDB        *gorm.DB
 	config        *config.Config
 	stellarClient utils.StellarClientInterface
 	fees          *services.FeeService
 	emailService  *services.EmailService
 }
 
-func NewRemittanceHandler(db *gorm.DB, cfg *config.Config) *RemittanceHandler {
+func NewRemittanceHandler(db *gorm.DB, cfg *config.Config, readDB ...*gorm.DB) *RemittanceHandler {
+	read := db
+	if len(readDB) > 0 && readDB[0] != nil {
+		read = readDB[0]
+	}
 	return &RemittanceHandler{
 		db:            db,
+		readDB:        read,
 		config:        cfg,
 		stellarClient: utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase),
 		fees:          services.NewFeeService(cfg),
@@ -59,17 +65,17 @@ func DecodeCursor(encoded string) (PaginationCursor, error) {
 	if encoded == "" {
 		return cursor, nil
 	}
-	
+
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return cursor, fmt.Errorf("invalid cursor encoding: %w", err)
 	}
-	
+
 	err = json.Unmarshal(data, &cursor)
 	if err != nil {
 		return cursor, fmt.Errorf("invalid cursor format: %w", err)
 	}
-	
+
 	return cursor, nil
 }
 
@@ -104,13 +110,13 @@ func Paginate(c *gin.Context) func(db *gorm.DB) *gorm.DB {
 }
 
 type CreateRemittanceRequest struct {
-	SenderAccount   string                 `json:"sender_account" binding:"required"`
-	RecipientAccount string                `json:"recipient_account" binding:"required"`
-	Amount          int64                  `json:"amount" binding:"required,gt=0"`
-	AssetCode       string                 `json:"asset_code" binding:"required"`
-	AssetIssuer     string                 `json:"asset_issuer"`
-	Conditions      map[string]interface{} `json:"conditions"`
-	Notes           string                 `json:"notes"`
+	SenderAccount    string                 `json:"sender_account" binding:"required"`
+	RecipientAccount string                 `json:"recipient_account" binding:"required"`
+	Amount           int64                  `json:"amount" binding:"required,gt=0"`
+	AssetCode        string                 `json:"asset_code" binding:"required"`
+	AssetIssuer      string                 `json:"asset_issuer"`
+	Conditions       map[string]interface{} `json:"conditions"`
+	Notes            string                 `json:"notes"`
 }
 
 type BatchPaymentItem struct {
@@ -128,12 +134,12 @@ type CreateBatchRemittanceRequest struct {
 }
 
 type SendRemittanceRequest struct {
-	SenderID       uint    `json:"sender_id" binding:"required"`
-	RecipientID    uint    `json:"recipient_id" binding:"required"`
-	Amount         int64   `json:"amount" binding:"required,gt=0"`
-	Currency       string  `json:"currency" binding:"required"`
-	TargetCurrency string  `json:"target_currency"`
-	Notes          string  `json:"notes"`
+	SenderID       uint   `json:"sender_id" binding:"required"`
+	RecipientID    uint   `json:"recipient_id" binding:"required"`
+	Amount         int64  `json:"amount" binding:"required,gt=0"`
+	Currency       string `json:"currency" binding:"required"`
+	TargetCurrency string `json:"target_currency"`
+	Notes          string `json:"notes"`
 }
 
 func (h *RemittanceHandler) SendRemittance(c *gin.Context) {
@@ -338,7 +344,7 @@ func (h *RemittanceHandler) GetRemittance(c *gin.Context) {
 	id := c.Param("id")
 	var payment models.Payment
 
-	if err := h.db.First(&payment, id).Error; err != nil {
+	if err := preferredReadDB(h.db, h.readDB).First(&payment, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.Error(errors.NewNotFoundError("Payment not found"))
 		} else {
@@ -351,14 +357,14 @@ func (h *RemittanceHandler) GetRemittance(c *gin.Context) {
 }
 
 type ListRemittancesResponse struct {
-	Data       []models.Payment `json:"data"`
-	Page       int              `json:"page,omitempty"`       // Deprecated: use cursor instead
-	PageSize   int              `json:"page_size,omitempty"`  // Deprecated: use limit instead
-	NextCursor string           `json:"next_cursor,omitempty"`
-	HasMore    bool             `json:"has_more"`
-	TotalCount *int64           `json:"total_count,omitempty"`
-	HasNext    *bool            `json:"has_next,omitempty"`
-	HasPrevious *bool           `json:"has_previous,omitempty"`
+	Data        []models.Payment `json:"data"`
+	Page        int              `json:"page,omitempty"`      // Deprecated: use cursor instead
+	PageSize    int              `json:"page_size,omitempty"` // Deprecated: use limit instead
+	NextCursor  string           `json:"next_cursor,omitempty"`
+	HasMore     bool             `json:"has_more"`
+	TotalCount  *int64           `json:"total_count,omitempty"`
+	HasNext     *bool            `json:"has_next,omitempty"`
+	HasPrevious *bool            `json:"has_previous,omitempty"`
 }
 
 func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
@@ -367,7 +373,7 @@ func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
 	// Support both cursor-based and legacy offset-based pagination
 	cursor := c.Query("cursor")
 	limitStr := c.Query("limit")
-	
+
 	// Cursor-based pagination (preferred)
 	if cursor != "" || limitStr != "" {
 		// Cursor-based pagination eliminates overflow risk (#198)
@@ -384,11 +390,11 @@ func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
 			return
 		}
 
-		query := h.db.Model(&models.Payment{}).Order("created_at DESC, id DESC")
-		
+		query := preferredReadDB(h.db, h.readDB).Model(&models.Payment{}).Order("created_at DESC, id DESC")
+
 		// Apply cursor filtering: WHERE created_at < cursor.CreatedAt OR (created_at = cursor.CreatedAt AND id < cursor.ID)
 		if !decodedCursor.CreatedAt.IsZero() {
-			query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", 
+			query = query.Where("created_at < ? OR (created_at = ? AND id < ?)",
 				decodedCursor.CreatedAt, decodedCursor.CreatedAt, decodedCursor.ID)
 		}
 
@@ -448,10 +454,11 @@ func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
 
 	// Count total records for metadata
 	var totalCount int64
-	h.db.Model(&models.Payment{}).Count(&totalCount)
+	readDB := preferredReadDB(h.db, h.readDB)
+	readDB.Model(&models.Payment{}).Count(&totalCount)
 
 	// DB query with pagination - check for pagination error from MaxPage validation
-	if err := h.db.Scopes(Paginate(c)).Order("created_at DESC").Find(&payments).Error; err != nil {
+	if err := readDB.Scopes(Paginate(c)).Order("created_at DESC").Find(&payments).Error; err != nil {
 		c.Error(errors.NewInternalError("Failed to fetch payments", err))
 		return
 	}
@@ -511,12 +518,12 @@ func (h *RemittanceHandler) CompleteRemittance(c *gin.Context) {
 }
 
 type CreateInvoiceRequest struct {
-	PaymentID   uint    `json:"payment_id" binding:"required"`
-	IssuerID    uint    `json:"issuer_id" binding:"required"`
-	RecipientID uint    `json:"recipient_id" binding:"required"`
-	Amount      int64   `json:"amount" binding:"required,gt=0"`
-	Currency    string  `json:"currency" binding:"required"`
-	Description string  `json:"description"`
+	PaymentID   uint   `json:"payment_id" binding:"required"`
+	IssuerID    uint   `json:"issuer_id" binding:"required"`
+	RecipientID uint   `json:"recipient_id" binding:"required"`
+	Amount      int64  `json:"amount" binding:"required,gt=0"`
+	Currency    string `json:"currency" binding:"required"`
+	Description string `json:"description"`
 }
 
 func (h *RemittanceHandler) CreateInvoice(c *gin.Context) {
@@ -554,7 +561,7 @@ func (h *RemittanceHandler) GetInvoice(c *gin.Context) {
 	id := c.Param("id")
 	var invoice models.Invoice
 
-	if err := h.db.Preload("Payment").First(&invoice, id).Error; err != nil {
+	if err := preferredReadDB(h.db, h.readDB).Preload("Payment").First(&invoice, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.Error(errors.NewNotFoundError("Invoice not found"))
 		} else {
@@ -591,7 +598,8 @@ func (h *RemittanceHandler) ListInvoices(c *gin.Context) {
 		pageSize = 20
 	}
 
-	query := h.db.Model(&models.Invoice{}).
+	readDB := preferredReadDB(h.db, h.readDB)
+	query := readDB.Model(&models.Invoice{}).
 		Where("issuer_id = ? OR recipient_id = ?", userID, userID)
 
 	if status := c.Query("status"); status != "" {
@@ -628,7 +636,7 @@ func (h *RemittanceHandler) ListInvoices(c *gin.Context) {
 			paymentIDs[i] = inv.PaymentID
 		}
 		var payments []models.Payment
-		if err := h.db.Where("id IN ?", paymentIDs).Find(&payments).Error; err != nil {
+		if err := readDB.Where("id IN ?", paymentIDs).Find(&payments).Error; err != nil {
 			c.Error(errors.NewInternalError("Failed to fetch payments for invoices", err))
 			return
 		}

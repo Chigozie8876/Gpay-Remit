@@ -43,6 +43,14 @@ func main() {
 		logger.Log.WithField("error", err).Fatal("Failed to connect to database")
 	}
 
+	readDB := db
+	if replicaDB, replicaErr := config.InitReadDB(cfg); replicaErr != nil {
+		logger.Log.WithField("error", replicaErr).Warn("Read replica unavailable — using primary for reads")
+	} else if replicaDB != nil {
+		readDB = replicaDB
+		logger.Log.Info("Database read replica connected")
+	}
+
 	if err := models.EncryptLegacyWebhookSecrets(db); err != nil {
 		logger.Log.WithField("error", err).Fatal("Failed to encrypt legacy webhook secrets")
 	}
@@ -72,7 +80,7 @@ func main() {
 	router.Use(middleware.CSRFProtection())
 	router.Use(middleware.SecurityHeadersMiddleware())
 
-	registerRoutes(router, db, cfg)
+	registerRoutes(router, db, readDB, cfg)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -142,13 +150,20 @@ func main() {
 	} else {
 		logger.Log.Info("Database connection closed")
 	}
+	if readDB != db {
+		if sqlDB, err := readDB.DB(); err == nil {
+			if err := sqlDB.Close(); err != nil {
+				logger.Log.WithField("error", err).Warn("Failed to close read replica")
+			}
+		}
+	}
 }
 
 // registerRoutes mounts every HTTP route on router. It is separate from
 // main so tests can enumerate the real route table (see
 // openapi_routes_test.go) without a database: handler constructors only
 // store their dependencies, so nil db is fine for registration.
-func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
+func registerRoutes(router *gin.Engine, db, readDB *gorm.DB, cfg *config.Config) {
 	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	healthHandler := handlers.NewHealthHandlerWithRedis(db, cfg, utils.RedisClient)
@@ -198,7 +213,9 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 				}
 				c.JSON(200, gin.H{"mfa_enabled": user.MFAEnabled})
 			})
-			remittanceHandler := handlers.NewRemittanceHandler(db, cfg)
+			remittanceHandler := handlers.NewRemittanceHandler(db, cfg, readDB)
+			searchHandler := handlers.NewSearchHandler(db, cfg, readDB)
+			protected.GET("/search/transactions", searchHandler.SearchTransactions)
 			protected.POST("/remittances/create", remittanceHandler.CreateRemittance)
 			protected.POST("/remittances", remittanceHandler.SendRemittance)
 			protected.GET("/remittances/:id", remittanceHandler.GetRemittance)
@@ -227,7 +244,7 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			auditHandler := handlers.NewAuditLogHandler(db)
 			protected.GET("/audit/logs", middleware.RequireRole("admin"), auditHandler.List)
 
-			exportHandler := handlers.NewExportHandler(db)
+			exportHandler := handlers.NewExportHandler(db, readDB)
 			protected.GET("/transactions/export", exportHandler.ExportTransactions)
 
 			// Admin rate limit management endpoints
@@ -254,7 +271,7 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.GET("/webhooks/:id/deliveries", webhookHandler.GetWebhookDeliveries)
 			protected.POST("/webhooks/deliveries/:delivery_id/retry", webhookHandler.RetryWebhookDelivery)
 
-			analyticsHandler := handlers.NewAnalyticsHandler(db)
+			analyticsHandler := handlers.NewAnalyticsHandler(db, readDB)
 			protected.GET("/analytics/volume", middleware.RequireRole("admin"), analyticsHandler.GetVolumeMetrics)
 			protected.GET("/analytics/fees", middleware.RequireRole("admin"), analyticsHandler.GetFeeMetrics)
 			protected.GET("/analytics/success-rate", middleware.RequireRole("admin"), analyticsHandler.GetSuccessRate)
@@ -297,7 +314,9 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 				}
 				c.JSON(200, gin.H{"mfa_enabled": user.MFAEnabled})
 			})
-			remittanceHandler := handlers.NewRemittanceHandler(db, cfg)
+			remittanceHandler := handlers.NewRemittanceHandler(db, cfg, readDB)
+			searchHandler := handlers.NewSearchHandler(db, cfg, readDB)
+			protected.GET("/search/transactions", searchHandler.SearchTransactions)
 			protected.POST("/remittances/create", remittanceHandler.CreateRemittance)
 			protected.POST("/remittances", remittanceHandler.SendRemittance)
 			protected.GET("/remittances/:id", remittanceHandler.GetRemittance)
@@ -326,7 +345,7 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			auditHandler := handlers.NewAuditLogHandler(db)
 			protected.GET("/audit/logs", middleware.RequireRole("admin"), auditHandler.List)
 
-			exportHandler := handlers.NewExportHandler(db)
+			exportHandler := handlers.NewExportHandler(db, readDB)
 			protected.GET("/transactions/export", exportHandler.ExportTransactions)
 
 			protected.POST("/admin/rate-limit/reset", middleware.RequireRole("admin"), middleware.AdminResetRateLimit(cfg))
@@ -351,7 +370,7 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.GET("/webhooks/:id/deliveries", webhookHandler.GetWebhookDeliveries)
 			protected.POST("/webhooks/deliveries/:delivery_id/retry", webhookHandler.RetryWebhookDelivery)
 
-			analyticsHandler := handlers.NewAnalyticsHandler(db)
+			analyticsHandler := handlers.NewAnalyticsHandler(db, readDB)
 			protected.GET("/analytics/volume", middleware.RequireRole("admin"), analyticsHandler.GetVolumeMetrics)
 			protected.GET("/analytics/fees", middleware.RequireRole("admin"), analyticsHandler.GetFeeMetrics)
 			protected.GET("/analytics/success-rate", middleware.RequireRole("admin"), analyticsHandler.GetSuccessRate)
