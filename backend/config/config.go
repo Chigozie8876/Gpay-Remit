@@ -192,6 +192,9 @@ type Config struct {
 	// SANDBOX_MODE environment variable.
 	SandboxMode bool
 
+	// Batch remittance configuration
+	MaxBatchSize int
+
 	// CORS is configured with explicit origins; credentials are only sent
 	// to exact origins listed in CORS_ALLOWED_ORIGINS.
 	CORSAllowedOrigins   []string
@@ -361,6 +364,8 @@ func LoadConfig() (*Config, error) {
 		ExchangeRateCacheTTL: getEnvAsDuration("EXCHANGE_RATE_CACHE_TTL", 60*time.Second),
 
 		SandboxMode: sandbox,
+
+		MaxBatchSize: getEnvAsInt("MAX_BATCH_SIZE", 100),
 
 		CORSAllowedOrigins:   corsAllowedOrigins,
 		CORSAllowedMethods:   corsAllowedMethods,
