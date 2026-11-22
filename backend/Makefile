@@ -1,7 +1,10 @@
-.PHONY: test integration-test chaos-test coverage coverage-html check fmt-check
+.PHONY: test integration-test chaos-test mutation-test coverage coverage-html check fmt-check
 
 test:
 	go test ./...
+
+mutation-test:
+	./scripts/run_mutation_tests.sh
 
 integration-test:
 	go test -count=1 -tags=integration ./...
