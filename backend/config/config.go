@@ -195,6 +195,13 @@ type Config struct {
 	// Batch remittance configuration
 	MaxBatchSize int
 
+	// Recurring remittance worker configuration (off by default)
+	RecurringWorkerEnabled   bool
+	RecurringWorkerInterval  time.Duration
+	RecurringWorkerBatchSize int
+	RecurringWorkerTimeout   time.Duration
+	RecurringMaxFailures     int
+
 	// CORS is configured with explicit origins; credentials are only sent
 	// to exact origins listed in CORS_ALLOWED_ORIGINS.
 	CORSAllowedOrigins   []string
@@ -366,6 +373,12 @@ func LoadConfig() (*Config, error) {
 		SandboxMode: sandbox,
 
 		MaxBatchSize: getEnvAsInt("MAX_BATCH_SIZE", 100),
+
+		RecurringWorkerEnabled:   getEnvOrDefault("RECURRING_WORKER_ENABLED", "false") == "true",
+		RecurringWorkerInterval:  getEnvAsDuration("RECURRING_WORKER_INTERVAL", 1*time.Minute),
+		RecurringWorkerBatchSize: getEnvAsInt("RECURRING_WORKER_BATCH_SIZE", 50),
+		RecurringWorkerTimeout:   getEnvAsDuration("RECURRING_WORKER_TIMEOUT", 30*time.Second),
+		RecurringMaxFailures:     getEnvAsInt("RECURRING_MAX_FAILURES", 3),
 
 		CORSAllowedOrigins:   corsAllowedOrigins,
 		CORSAllowedMethods:   corsAllowedMethods,

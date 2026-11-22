@@ -1850,6 +1850,129 @@ paths:
         '404':
           description: Not found
 
+  /recurring-schedules:
+    get:
+      tags: [Remittances]
+      summary: List recurring remittance schedules for the authenticated user
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of recurring schedules
+        '401':
+          description: Unauthorized
+    post:
+      tags: [Remittances]
+      summary: Create a recurring remittance schedule
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sender_account, recipient_account, amount, currency, frequency]
+              properties:
+                sender_account:
+                  type: string
+                recipient_account:
+                  type: string
+                amount:
+                  type: integer
+                  format: int64
+                currency:
+                  type: string
+                asset_issuer:
+                  type: string
+                frequency:
+                  type: string
+                  enum: [daily, weekly, monthly]
+                next_run_at:
+                  type: string
+                  format: date-time
+                notes:
+                  type: string
+      responses:
+        '201':
+          description: Schedule created
+        '400':
+          description: Validation error
+        '403':
+          description: Forbidden
+
+  /recurring-schedules/{id}:
+    get:
+      tags: [Remittances]
+      summary: Get a recurring schedule by ID
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Recurring schedule
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found
+
+  /recurring-schedules/{id}/pause:
+    post:
+      tags: [Remittances]
+      summary: Pause an active recurring schedule
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Schedule paused
+        '400':
+          description: Invalid state transition
+
+  /recurring-schedules/{id}/resume:
+    post:
+      tags: [Remittances]
+      summary: Resume a paused recurring schedule
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Schedule resumed
+        '400':
+          description: Invalid state transition
+
+  /recurring-schedules/{id}/cancel:
+    post:
+      tags: [Remittances]
+      summary: Cancel a recurring schedule permanently
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Schedule cancelled
+
   /health:
     servers:
       - url: http://localhost:8080

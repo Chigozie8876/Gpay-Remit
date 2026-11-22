@@ -85,6 +85,9 @@ func main() {
 	workers.StartMonitor(baseCtx, &wg)
 	workers.StartWebhookRetryWorker(baseCtx, &wg, db)
 	workers.StartPaymentRequestExpiryWorker(baseCtx, &wg, db)
+	if cfg.RecurringWorkerEnabled {
+		workers.StartRecurringPaymentWorker(baseCtx, &wg, db, cfg)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -214,6 +217,14 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.DELETE("/templates/:id", templateHandler.DeleteTemplate)
 			protected.POST("/templates/:id/send", templateHandler.SendFromTemplate)
 
+			recurringHandler := handlers.NewRecurringScheduleHandler(db, cfg, utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase))
+			protected.POST("/recurring-schedules", recurringHandler.CreateSchedule)
+			protected.GET("/recurring-schedules", recurringHandler.ListSchedules)
+			protected.GET("/recurring-schedules/:id", recurringHandler.GetSchedule)
+			protected.POST("/recurring-schedules/:id/pause", recurringHandler.PauseSchedule)
+			protected.POST("/recurring-schedules/:id/resume", recurringHandler.ResumeSchedule)
+			protected.POST("/recurring-schedules/:id/cancel", recurringHandler.CancelSchedule)
+
 			protected.POST("/invoices", remittanceHandler.CreateInvoice)
 			protected.GET("/invoices", remittanceHandler.ListInvoices)
 			protected.GET("/invoices/:id", remittanceHandler.GetInvoice)
@@ -321,6 +332,14 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.PUT("/templates/:id", templateHandler.UpdateTemplate)
 			protected.DELETE("/templates/:id", templateHandler.DeleteTemplate)
 			protected.POST("/templates/:id/send", templateHandler.SendFromTemplate)
+
+			recurringHandler := handlers.NewRecurringScheduleHandler(db, cfg, utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase))
+			protected.POST("/recurring-schedules", recurringHandler.CreateSchedule)
+			protected.GET("/recurring-schedules", recurringHandler.ListSchedules)
+			protected.GET("/recurring-schedules/:id", recurringHandler.GetSchedule)
+			protected.POST("/recurring-schedules/:id/pause", recurringHandler.PauseSchedule)
+			protected.POST("/recurring-schedules/:id/resume", recurringHandler.ResumeSchedule)
+			protected.POST("/recurring-schedules/:id/cancel", recurringHandler.CancelSchedule)
 
 			protected.POST("/invoices", remittanceHandler.CreateInvoice)
 			protected.GET("/invoices", remittanceHandler.ListInvoices)

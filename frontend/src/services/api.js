@@ -116,6 +116,13 @@ export const deleteTemplate = (id, config = {}) => api.delete(`/templates/${id}`
 export const sendFromTemplate = (id, config = {}) => api.post(`/templates/${id}/send`, {}, config);
 export const calculateFee = (amount, config = {}) => api.get(`/fees/calculate?amount=${amount}`, config);
 
+// ── Recurring Schedules ─────────────────────────────────────────────────
+export const getRecurringSchedules = (config = {}) => api.get("/recurring-schedules", config);
+export const createRecurringSchedule = (data, config = {}) => api.post("/recurring-schedules", data, config);
+export const pauseRecurringSchedule = (id, config = {}) => api.post(`/recurring-schedules/${id}/pause`, {}, config);
+export const resumeRecurringSchedule = (id, config = {}) => api.post(`/recurring-schedules/${id}/resume`, {}, config);
+export const cancelRecurringSchedule = (id, config = {}) => api.post(`/recurring-schedules/${id}/cancel`, {}, config);
+
 // ── Auth & 2FA ──────────────────────────────────────────────────────────
 export const register = (data) => api.post("/auth/register", data);
 export const login = (data) => api.post("/auth/login", data);
