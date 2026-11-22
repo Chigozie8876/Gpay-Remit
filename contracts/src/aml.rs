@@ -53,7 +53,9 @@ pub struct AmlScreeningResult {
 #[contract]
 pub struct MockAmlOracleContract;
 
-#[contractimpl]
+// Wasm builds export one contract each (`--features mock-aml`) because the
+// contracts in this crate share entry-point names; native builds export all.
+#[cfg_attr(any(not(target_family = "wasm"), feature = "mock-aml"), contractimpl)]
 impl MockAmlOracleContract {
     pub fn initialize(env: Env, admin: Address) {
         admin.require_auth();

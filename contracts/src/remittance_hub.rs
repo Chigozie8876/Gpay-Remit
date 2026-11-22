@@ -221,7 +221,9 @@ pub enum AmlKey {
 #[contract]
 pub struct RemittanceHubContract;
 
-#[contractimpl]
+// Wasm builds export one contract each (`--features hub`) because the
+// contracts in this crate share entry-point names; native builds export all.
+#[cfg_attr(any(not(target_family = "wasm"), feature = "hub"), contractimpl)]
 impl RemittanceHubContract {
     /// Enforce that `caller` signed the invocation **and** is the stored admin.
     ///

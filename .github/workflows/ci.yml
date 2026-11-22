@@ -5,6 +5,18 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # Manual (re)deployment of the contracts to testnet. Runs the test jobs
+  # first; the deploy job only runs on main or on this trigger.
+  workflow_dispatch:
+    inputs:
+      contracts:
+        description: "Contracts to deploy (space-separated subset of: mock-oracle mock-kyc mock-aml escrow hub)"
+        required: false
+        default: "mock-oracle mock-kyc mock-aml escrow hub"
+      skip_oversize:
+        description: "Skip contracts over the network size limit instead of failing"
+        type: boolean
+        default: false
 
 jobs:
   test-contracts:
@@ -16,7 +28,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown, wasm32v1-none
           components: rustfmt, clippy
 
       - name: Cache cargo registry
@@ -32,11 +44,36 @@ jobs:
       # (`prop` -> tests/prop_conditions.rs, `integration` ->
       # tests/integration_remittance.rs). tests/fuzz_*.rs are proptest-based
       # and run on every `cargo test`.
+      # Property tests use a fixed seed per run (the run id) so any failure can
+      # be replayed locally with the command printed below.
       - name: Run contract tests (all features, incl. property/fuzz tests)
         working-directory: ./contracts
         env:
           PROPTEST_CASES: "256"
-        run: cargo test --locked --all-features --no-fail-fast
+          PROPTEST_RNG_SEED: ${{ github.run_id }}
+        run: |
+          echo "Proptest seed: $PROPTEST_RNG_SEED"
+          echo "Reproduce: cd contracts && PROPTEST_RNG_SEED=$PROPTEST_RNG_SEED PROPTEST_CASES=$PROPTEST_CASES cargo test --all-features"
+          cargo test --locked --all-features --no-fail-fast
+
+      - name: Upload proptest regressions
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proptest-regressions
+          path: contracts/proptest-regressions/
+          if-no-files-found: ignore
+
+      # Each contract is a separate Wasm module (see contracts/Cargo.toml
+      # features); building them catches exported-symbol collisions that
+      # native test builds cannot.
+      - name: Build contract Wasm
+        working-directory: ./contracts
+        run: |
+          for contract in escrow hub mock-oracle mock-kyc mock-aml; do
+            cargo build --locked --profile release-wasm --target wasm32v1-none --features "$contract"
+            echo "$contract: $(wc -c < target/wasm32v1-none/release-wasm/gpay_remit_contracts.wasm) bytes (unoptimised)"
+          done
 
   test-backend:
     name: Test Backend
@@ -141,3 +178,72 @@ jobs:
           name: frontend-coverage
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+  deploy-testnet:
+    name: Deploy Contracts to Testnet
+    needs: [test-contracts, test-backend, test-frontend]
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    environment: testnet
+    concurrency:
+      group: deploy-testnet
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      STELLAR_CLI_VERSION: "26.0.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('contracts/Cargo.lock') }}
+
+      - name: Install Stellar CLI
+        run: |
+          curl -fsSL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C /usr/local/bin stellar
+          stellar --version
+
+      # Builds, uploads, deploys and initialises every contract, then smoke
+      # tests each one with read-only calls. Without the secret a throwaway
+      # friendbot-funded deployer is used.
+      - name: Deploy and smoke test
+        env:
+          NETWORK: testnet
+          OUT_DIR: ${{ github.workspace }}/deployments
+          STELLAR_DEPLOYER_SECRET: ${{ secrets.STELLAR_DEPLOYER_SECRET }}
+          CONTRACTS: ${{ github.event.inputs.contracts || 'mock-oracle mock-kyc mock-aml escrow hub' }}
+          SKIP_OVERSIZE: ${{ github.event.inputs.skip_oversize == 'true' && '1' || '0' }}
+        run: ./scripts/deploy_contracts.sh
+
+      - name: Publish deployment summary
+        if: always() && hashFiles('deployments/testnet.json') != ''
+        run: |
+          {
+            echo "### Testnet deployment (${GITHUB_SHA::7})"
+            echo
+            echo "| Contract | Status | Contract ID | Wasm bytes |"
+            echo "| --- | --- | --- | --- |"
+            jq -r '.contracts | to_entries[] | "| \(.key) | \(.value.status) | `\(.value.contract_id // "-")` | \(.value.wasm_bytes) |"' deployments/testnet.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deployed contract addresses
+        if: always() && hashFiles('deployments/testnet.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: testnet-contracts-${{ github.sha }}
+          path: |
+            deployments/testnet.json
+            deployments/wasm/*.wasm
+          retention-days: 90

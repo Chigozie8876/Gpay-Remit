@@ -1,11 +1,10 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Gpay-Remit/gpay-remit/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -22,17 +21,12 @@ type OpenAPISpec struct {
 }
 
 func TestOpenAPISpecValidation(t *testing.T) {
-	specPath := filepath.Join("..", "docs", "api", "openapi.yaml")
-	data, err := os.ReadFile(specPath)
-	if err != nil {
-		// try direct path
-		specPath = filepath.Join("docs", "api", "openapi.yaml")
-		data, err = os.ReadFile(specPath)
-	}
-	require.NoError(t, err, "Failed to read openapi.yaml")
+	// Validate the canonical spec exactly as it is served
+	// (backend/handlers/openapi.yaml, embedded into the binary).
+	data := handlers.OpenAPISpec()
 
 	var spec OpenAPISpec
-	err = yaml.Unmarshal(data, &spec)
+	err := yaml.Unmarshal(data, &spec)
 	require.NoError(t, err, "OpenAPI spec should be valid YAML syntax")
 
 	// 1. Verify OpenAPI version

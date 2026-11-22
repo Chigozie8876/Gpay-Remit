@@ -76,7 +76,9 @@ const RATE_PRECISION: i128 = 1_000_000_000_000_000_000; // 18 decimal places
 #[contract]
 pub struct MockOracleContract;
 
-#[contractimpl]
+// Wasm builds export one contract each (`--features mock-oracle`) because the
+// contracts in this crate share entry-point names; native builds export all.
+#[cfg_attr(any(not(target_family = "wasm"), feature = "mock-oracle"), contractimpl)]
 impl MockOracleContract {
     pub fn init_oracle(env: Env, admin: Address) {
         admin.require_auth();

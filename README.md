@@ -59,10 +59,29 @@ chmod +x scripts/setup.sh
 # Start local development environment
 docker-compose up -d
 
-# Deploy contracts to Stellar Testnet
-chmod +x scripts/deploy_contracts.sh
+# Deploy contracts to Stellar Testnet (needs the stellar CLI and jq)
 ./scripts/deploy_contracts.sh
 ```
+
+### Contract deployment
+
+`scripts/deploy_contracts.sh` builds each contract as its own Wasm module, checks it against the network's contract size limit, then uploads, deploys and initializes it. It then smoke-tests every deployed contract with read-only calls. Contract IDs are written to `deployments/<network>.json`.
+
+The script reads these environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `NETWORK` | `testnet` | Stellar CLI network name |
+| `STELLAR_DEPLOYER_SECRET` | unset | Deployer secret key. On testnet, if this is unset, a throwaway friendbot-funded key is used. |
+| `CONTRACTS` | `mock-oracle mock-kyc mock-aml escrow hub` | Which contracts to deploy |
+| `SKIP_OVERSIZE` | `0` | Set to `1` to skip, instead of fail on, contracts over the size limit |
+
+**In CI:**
+
+- **Automatic:** the `Deploy Contracts to Testnet` job in `.github/workflows/ci.yml` runs this script on every merge to `main`, after all test jobs pass.
+- **Manual:** you can redeploy from *Actions → CI → Run workflow*, optionally choosing which contracts to deploy.
+- **Results:** the deployed addresses are uploaded as the `testnet-contracts-<sha>` artifact and listed in the job summary.
+- **Deployer key:** set the `STELLAR_DEPLOYER_SECRET` secret on the `testnet` environment so the deployed contracts keep a stable admin.
 
 ### Running the Application
 

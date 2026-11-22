@@ -4,15 +4,19 @@ on:
   push:
     branches: [ main, dev ]
     paths:
-      - 'docs/api/openapi.yaml'
+      - 'backend/handlers/openapi.yaml'
       - 'backend/openapi_validation_test.go'
+      - 'backend/openapi_routes_test.go'
+      - 'scripts/validate_openapi.sh'
       - 'backend/main.go'
       - 'backend/handlers/**'
   pull_request:
     branches: [ main, dev ]
     paths:
-      - 'docs/api/openapi.yaml'
+      - 'backend/handlers/openapi.yaml'
       - 'backend/openapi_validation_test.go'
+      - 'backend/openapi_routes_test.go'
+      - 'scripts/validate_openapi.sh'
       - 'backend/main.go'
       - 'backend/handlers/**'
 
