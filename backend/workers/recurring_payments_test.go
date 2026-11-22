@@ -9,6 +9,7 @@ import (
 	"github.com/Gpay-Remit/gpay-remit/config"
 	"github.com/Gpay-Remit/gpay-remit/models"
 	"github.com/Gpay-Remit/gpay-remit/services"
+	"github.com/Gpay-Remit/gpay-remit/utils"
 	"github.com/stellar/go/txnbuild"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,9 @@ func (s *stubStellarClient) BuildPaymentTx(ctx context.Context, sourceAccount tx
 }
 func (s *stubStellarClient) SignTx(ctx context.Context, envelopeXDR, secretKey string) (string, error) {
 	return "", nil
+}
+func (s *stubStellarClient) GetAccountBalances(ctx context.Context, accountID string) ([]utils.AccountBalance, error) {
+	return nil, nil
 }
 
 func setupWorkerDB(t *testing.T) *gorm.DB {

@@ -123,6 +123,12 @@ export const pauseRecurringSchedule = (id, config = {}) => api.post(`/recurring-
 export const resumeRecurringSchedule = (id, config = {}) => api.post(`/recurring-schedules/${id}/resume`, {}, config);
 export const cancelRecurringSchedule = (id, config = {}) => api.post(`/recurring-schedules/${id}/cancel`, {}, config);
 
+// ── Multi-Currency Wallet ───────────────────────────────────────────────
+export const getWalletBalances = (config = {}) => api.get("/wallet/balances", config);
+export const getWalletPreferences = (config = {}) => api.get("/wallet/preferences", config);
+export const updateWalletPreferences = (preferredCurrency, config = {}) =>
+  api.put("/wallet/preferences", { preferred_currency: preferredCurrency }, config);
+
 // ── Auth & 2FA ──────────────────────────────────────────────────────────
 export const register = (data) => api.post("/auth/register", data);
 export const login = (data) => api.post("/auth/login", data);

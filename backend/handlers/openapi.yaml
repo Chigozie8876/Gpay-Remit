@@ -1973,6 +1973,52 @@ paths:
         '200':
           description: Schedule cancelled
 
+  /wallet/balances:
+    get:
+      tags: [Exchange Rates]
+      summary: Get multi-currency wallet balances and preferred-currency estimates
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Wallet balances and conversion estimates
+        '401':
+          description: Unauthorized
+
+  /wallet/preferences:
+    get:
+      tags: [Exchange Rates]
+      summary: Get the authenticated user's preferred display currency
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Currency preference
+        '401':
+          description: Unauthorized
+    put:
+      tags: [Exchange Rates]
+      summary: Update the authenticated user's preferred display currency
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preferred_currency]
+              properties:
+                preferred_currency:
+                  type: string
+      responses:
+        '200':
+          description: Updated preference
+        '400':
+          description: Unsupported currency
+        '401':
+          description: Unauthorized
+
   /health:
     servers:
       - url: http://localhost:8080

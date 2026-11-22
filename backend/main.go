@@ -225,6 +225,11 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.POST("/recurring-schedules/:id/resume", recurringHandler.ResumeSchedule)
 			protected.POST("/recurring-schedules/:id/cancel", recurringHandler.CancelSchedule)
 
+			walletHandler := handlers.NewWalletHandler(db, cfg, utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase))
+			protected.GET("/wallet/balances", walletHandler.GetBalances)
+			protected.GET("/wallet/preferences", walletHandler.GetPreferences)
+			protected.PUT("/wallet/preferences", walletHandler.UpdatePreferences)
+
 			protected.POST("/invoices", remittanceHandler.CreateInvoice)
 			protected.GET("/invoices", remittanceHandler.ListInvoices)
 			protected.GET("/invoices/:id", remittanceHandler.GetInvoice)
@@ -340,6 +345,11 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.POST("/recurring-schedules/:id/pause", recurringHandler.PauseSchedule)
 			protected.POST("/recurring-schedules/:id/resume", recurringHandler.ResumeSchedule)
 			protected.POST("/recurring-schedules/:id/cancel", recurringHandler.CancelSchedule)
+
+			walletHandler := handlers.NewWalletHandler(db, cfg, utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase))
+			protected.GET("/wallet/balances", walletHandler.GetBalances)
+			protected.GET("/wallet/preferences", walletHandler.GetPreferences)
+			protected.PUT("/wallet/preferences", walletHandler.UpdatePreferences)
 
 			protected.POST("/invoices", remittanceHandler.CreateInvoice)
 			protected.GET("/invoices", remittanceHandler.ListInvoices)

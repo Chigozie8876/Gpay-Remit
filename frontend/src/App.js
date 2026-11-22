@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
 import RemittanceForm from "./components/RemittanceForm";
 import PaymentTemplates from "./components/PaymentTemplates";
 import RecurringSchedules from "./components/RecurringSchedules";
+import WalletDashboard from "./components/WalletDashboard";
 import InvoiceViewer from "./components/InvoiceViewer";
 import ErrorBoundary from "./components/ErrorBoundary";
 import TransactionHistory from "./pages/TransactionHistory";
@@ -123,6 +124,7 @@ function App() {
                 <Link to="/">{t.send}</Link>
                 <Link to="/templates">{t.templates}</Link>
                 <Link to="/recurring">{t.recurring}</Link>
+                <Link to="/wallet">{t.wallet}</Link>
                 <Link to="/invoices">{t.invoices}</Link>
                 <Link to="/transactions">{t.history}</Link>
               </nav>
@@ -143,6 +145,7 @@ function App() {
                   <Route path="/" element={<RemittanceForm />} />
                   <Route path="/templates" element={<PaymentTemplates />} />
                   <Route path="/recurring" element={<RecurringSchedules />} />
+                  <Route path="/wallet" element={<WalletDashboard />} />
                   <Route path="/invoices" element={<InvoiceViewer />} />
                   <Route path="/transactions" element={<TransactionHistory />} />
                 </Routes>

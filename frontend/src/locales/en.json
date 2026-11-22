@@ -4,6 +4,7 @@
   "send": "Send Remittance",
   "templates": "Templates",
   "recurring": "Recurring",
+  "wallet": "Wallet",
   "invoices": "View Invoices",
   "history": "Transaction History",
   "toggleDark": "Toggle Dark Mode",
