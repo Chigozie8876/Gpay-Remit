@@ -65,6 +65,49 @@ components:
       schema:
         type: integer
 
+  # Rate-limit headers (#382). Rate-limited routes return these on every
+  # response; Retry-After is only present on 429 responses.
+  headers:
+    X-RateLimit-Limit:
+      description: Maximum number of requests allowed per rate-limit window for this caller and endpoint.
+      schema:
+        type: integer
+        example: 30
+    X-RateLimit-Remaining:
+      description: Requests remaining in the current window. Present on 429 responses too, where it is `0`.
+      schema:
+        type: integer
+        minimum: 0
+        example: 12
+    X-RateLimit-Reset:
+      description: Unix timestamp (seconds) at which the current window resets.
+      schema:
+        type: integer
+        example: 1763800000
+    Retry-After:
+      description: Seconds to wait before retrying. Rounded up and never less than 1. Present only on 429 responses.
+      schema:
+        type: integer
+        minimum: 1
+        example: 12
+
+  responses:
+    TooManyRequests:
+      description: Rate limit exceeded for this caller and endpoint. Wait at least `Retry-After` seconds before retrying.
+      headers:
+        X-RateLimit-Limit:
+          $ref: '#/components/headers/X-RateLimit-Limit'
+        X-RateLimit-Remaining:
+          $ref: '#/components/headers/X-RateLimit-Remaining'
+        X-RateLimit-Reset:
+          $ref: '#/components/headers/X-RateLimit-Reset'
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
   schemas:
     Error:
       type: object
@@ -1559,13 +1602,25 @@ paths:
           schema:
             type: string
             example: NGN
+      description: |
+        Rate-limited to 30 lookups per minute per authenticated user (per client IP
+        when no user is present). Every response carries the `X-RateLimit-*` headers.
+        A 429 response also carries `Retry-After`, the number of seconds to wait
+        before retrying. The 429 body includes `retry_after` and `reset_at`.
       responses:
         '200':
           description: Exchange rate
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
         '400':
           description: Missing or unsupported currency
         '429':
-          description: Rate limit exceeded
+          $ref: '#/components/responses/TooManyRequests'
 
   /admin/rate-limit/reset:
     post:

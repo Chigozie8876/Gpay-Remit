@@ -30,7 +30,11 @@ pub enum EventData {
 #[cfg_attr(not(test), contracttype)]
 #[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
 pub struct GpayEvent {
+    /// Ledger close time (seconds since epoch) of the ledger that emitted the event.
     pub timestamp: u64,
+    /// Ledger sequence number of the ledger that emitted the event. Together with
+    /// the event's position within that ledger this gives indexers a total order.
+    pub ledger: u32,
     pub actor: Address,
     pub amount: i128,
     pub status: Symbol,
@@ -53,6 +57,7 @@ pub fn emit(
             (symbol_short!("gpayremit"), component, action, id),
             GpayEvent {
                 timestamp: env.ledger().timestamp(),
+                ledger: env.ledger().sequence(),
                 actor: actor.clone(),
                 amount,
                 status,
@@ -65,7 +70,13 @@ pub fn emit(
         // In test mode, publish a simpler event structure
         env.events().publish(
             (symbol_short!("gpayremit"), component, action, id),
-            (env.ledger().timestamp(), actor.clone(), amount, status),
+            (
+                env.ledger().timestamp(),
+                env.ledger().sequence(),
+                actor.clone(),
+                amount,
+                status,
+            ),
         );
     }
 }
