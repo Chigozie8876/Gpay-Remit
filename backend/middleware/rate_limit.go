@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -253,7 +254,7 @@ func RateLimitMiddleware(cfg *config.Config) gin.HandlerFunc {
 		c.Header("X-RateLimit-Reset", strconv.FormatInt(resetAt.Unix(), 10))
 
 		if !allowed {
-			retryAfter := int(time.Until(resetAt).Seconds())
+			retryAfter := retryAfterSeconds(time.Until(resetAt))
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error":       "rate limit exceeded",
@@ -265,6 +266,18 @@ func RateLimitMiddleware(cfg *config.Config) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// retryAfterSeconds converts the time remaining until a rate-limit window resets
+// into the whole-second value sent in the Retry-After header. It rounds up so a
+// client never retries before the window has reset, and it is at least 1 so a
+// 429 never advertises "0" (truncating a sub-second wait used to do that).
+func retryAfterSeconds(remaining time.Duration) int {
+	secs := int(math.Ceil(remaining.Seconds()))
+	if secs < 1 {
+		return 1
+	}
+	return secs
 }
 
 // RateLimitMiddleWare is the old function name kept for backward compatibility
