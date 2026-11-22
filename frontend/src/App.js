@@ -30,7 +30,28 @@ function detectBrowserLanguage() {
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   // #288: Dark Mode State
-  const [darkMode, setDarkMode] = useState(false);
+  // Initial value: saved preference, else the OS colour-scheme preference.
+  const [darkMode, setDarkMode] = useState(() => {
+    try {
+      const stored = localStorage.getItem("gpay_dark_mode");
+      if (stored === "true" || stored === "false") return stored === "true";
+    } catch {
+      // storage unavailable (private mode / blocked): fall back to OS preference
+    }
+    return typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : false;
+  });
+
+  // Persist the preference and mirror it onto <body> for global theming.
+  useEffect(() => {
+    try {
+      localStorage.setItem("gpay_dark_mode", String(darkMode));
+    } catch {
+      // ignore write failures
+    }
+    document.body.classList.toggle("dark-mode", darkMode);
+  }, [darkMode]);
   // #290: Language State with browser language detection
   const [lang, setLang] = useState(() => {
     return localStorage.getItem("gpay_lang") || detectBrowserLanguage();

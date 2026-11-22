@@ -8,6 +8,8 @@ function ProblemChild() {
 
 test("ErrorBoundary catches render errors and displays fallback UI", () => {
   const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  const originalEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "development";
 
   render(
     <ErrorBoundary>
@@ -20,6 +22,25 @@ test("ErrorBoundary catches render errors and displays fallback UI", () => {
   expect(screen.getByText(/Test error/i)).toBeInTheDocument();
   expect(consoleErrorSpy).toHaveBeenCalled();
 
+  process.env.NODE_ENV = originalEnv;
+  consoleErrorSpy.mockRestore();
+});
+
+test("ErrorBoundary hides raw error message outside development and offers reload", () => {
+  const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  const originalEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+
+  render(
+    <ErrorBoundary>
+      <ProblemChild />
+    </ErrorBoundary>
+  );
+
+  expect(screen.queryByText(/Test error/i)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Reload page/i })).toBeInTheDocument();
+
+  process.env.NODE_ENV = originalEnv;
   consoleErrorSpy.mockRestore();
 });
 
@@ -47,7 +68,6 @@ test("ErrorBoundary reset button clears the error state", () => {
 
   // Boundary should show the error fallback.
   expect(screen.getByRole("alert")).toBeInTheDocument();
-  expect(screen.getByText(/Initial failure/i)).toBeInTheDocument();
 
   // Re-render with a safe child BEFORE clicking reset so that when the
   // boundary resets its state and re-renders, the safe child renders normally.
