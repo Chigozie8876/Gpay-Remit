@@ -160,34 +160,77 @@ main:focus {
   outline: none;
 }
 
-/* #288: Dark Mode Styles */
+/* #355: Theme colour tokens. Light values are the defaults; dark values apply
+   when the .dark-mode class is on the app wrapper or <body>. */
+:root {
+  --color-bg: #f5f5f5;
+  --color-surface: #ffffff;
+  --color-text: #1a1a1a;
+  --color-input-bg: #ffffff;
+  --color-border: #cccccc;
+  --color-table-head: #f0f0f0;
+  --color-shadow: rgba(0, 0, 0, 0.1);
+}
+
+.App.dark-mode,
+body.dark-mode {
+  --color-bg: #121212;
+  --color-surface: #1e1e1e;
+  --color-text: #ffffff;
+  --color-input-bg: #2c2c2c;
+  --color-border: #444444;
+  --color-table-head: #2c2c2c;
+  --color-shadow: rgba(255, 255, 255, 0.05);
+}
+
+/* #288 / #355: Dark mode styles driven by the tokens above */
 .App.dark-mode {
-  background-color: #121212;
-  color: #ffffff;
+  background-color: var(--color-bg);
+  color: var(--color-text);
 }
 
 .App.dark-mode .remittance-form,
 .App.dark-mode .invoice-viewer {
-  background-color: #1e1e1e;
-  color: #ffffff;
-  box-shadow: 0 2px 4px rgba(255, 255, 255, 0.05);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 2px 4px var(--color-shadow);
 }
 
 .App.dark-mode .form-group input,
 .App.dark-mode .form-group select,
 .App.dark-mode .form-group textarea {
-  background-color: #2c2c2c;
-  color: #ffffff;
-  border: 1px solid #444;
+  background-color: var(--color-input-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
 }
 
 .App.dark-mode table th {
-  background-color: #2c2c2c;
-  color: #ffffff;
+  background-color: var(--color-table-head);
+  color: var(--color-text);
 }
 
 .App.dark-mode table td {
-  border-bottom: 1px solid #444;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* #357: Stellar address input with valid-state checkmark */
+.input-with-status {
+  position: relative;
+}
+
+.input-with-status input {
+  width: 100%;
+  padding-right: 32px;
+  box-sizing: border-box;
+}
+
+.address-valid {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #2e7d32;
+  font-weight: bold;
 }
 
 .header-controls {

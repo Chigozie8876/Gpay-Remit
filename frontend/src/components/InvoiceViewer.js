@@ -23,7 +23,8 @@ function InvoiceViewer() {
   }, []);
 
   // #113 — poll every 10 s so status updates surface without a manual refresh.
-  usePolling(fetchInvoices, 10_000);
+  // #351 — pauses while the tab is hidden and resumes immediately when visible.
+  usePolling(fetchInvoices, 10_000, true, { pauseWhenHidden: true });
 
   return (
     <div className="invoice-viewer">

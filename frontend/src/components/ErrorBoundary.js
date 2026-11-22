@@ -1,6 +1,9 @@
 // #105 — catches render errors in the component tree and shows a friendly
 // fallback instead of a blank white screen.
+// #354 — adds Try again / Reload page actions, reports the error, and shows
+// the raw error message only in development.
 import React from "react";
+import { reportError } from "../utils/errorReporting";
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -13,22 +16,35 @@ class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
-    console.error("[ErrorBoundary]", error, info.componentStack);
+    reportError(error, info);
   }
 
   handleReset = () => {
     this.setState({ hasError: false, message: null });
   };
 
+  handleReload = () => {
+    window.location.reload();
+  };
+
   render() {
     if (this.state.hasError) {
+      const isDevelopment = process.env.NODE_ENV === "development";
       return (
         <div role="alert" className="error-boundary" aria-live="assertive">
           <h2>Something went wrong</h2>
-          <p>{this.state.message}</p>
-          <button onClick={this.handleReset} aria-label="Try again">
-            Try again
-          </button>
+          <p>Try again, or reload the page if the problem continues.</p>
+          {isDevelopment && this.state.message && (
+            <p className="error-boundary-detail">{this.state.message}</p>
+          )}
+          <div className="error-boundary-actions" style={{ display: "flex", gap: "10px" }}>
+            <button type="button" onClick={this.handleReset} aria-label="Try again">
+              Try again
+            </button>
+            <button type="button" onClick={this.handleReload} aria-label="Reload page">
+              Reload page
+            </button>
+          </div>
         </div>
       );
     }

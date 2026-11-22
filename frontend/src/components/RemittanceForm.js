@@ -1,7 +1,11 @@
 // #110 form validation  #116 accessibility  #117 input sanitization  #118 conversion preview
 import React, { useState, useEffect, useCallback } from "react";
 import { sendRemittance, getExchangeRate } from "../services/api";
-import { validateRemittanceForm } from "../utils/validation";
+import {
+  validateRemittanceForm,
+  validateStellarAddress,
+  isValidStellarAddress,
+} from "../utils/validation";
 import { sanitizeInput } from "../utils/sanitize";
 import ConversionPreview from "./ConversionPreview";
 import LoadingSpinner from "./LoadingSpinner";
@@ -9,6 +13,7 @@ import LoadingSpinner from "./LoadingSpinner";
 const INITIAL = {
   sender_id: "",
   recipient_id: "",
+  recipient_account: "",
   amount: "",
   currency: "USD",
   target_currency: "EUR",
@@ -72,7 +77,8 @@ function RemittanceForm() {
   const handleChange = (e) => {
     const { name, value } = e.target;
     // #117 — sanitize free-text fields only
-    const safe = name === "notes" ? sanitizeInput(value) : value;
+    // #357 — Stellar addresses never contain whitespace, so trim as the user types
+    const safe = name === "notes" ? sanitizeInput(value) : name === "recipient_account" ? value.trim() : value;
     setFormData((prev) => ({ ...prev, [name]: safe }));
     if (fieldErrors[name]) setFieldErrors((prev) => ({ ...prev, [name]: undefined }));
   };
@@ -177,6 +183,39 @@ function RemittanceForm() {
             aria-invalid={!!fieldErrors.recipient_id}
           />
           <FieldError id="err-recipient_id" message={fieldErrors.recipient_id} />
+        </div>
+
+        {/* #357 — Stellar address with inline format validation and a valid-state indicator */}
+        <div className="form-group">
+          <label htmlFor="recipient_account">Recipient Stellar Address</label>
+          <div className="input-with-status">
+            <input
+              id="recipient_account"
+              type="text"
+              name="recipient_account"
+              value={formData.recipient_account}
+              onChange={handleChange}
+              onBlur={() =>
+                setFieldErrors((prev) => ({
+                  ...prev,
+                  recipient_account: validateStellarAddress(formData.recipient_account) || undefined,
+                }))
+              }
+              placeholder="G..."
+              autoComplete="off"
+              spellCheck={false}
+              required
+              aria-required="true"
+              aria-describedby={fieldErrors.recipient_account ? "err-recipient_account" : undefined}
+              aria-invalid={!!fieldErrors.recipient_account}
+            />
+            {isValidStellarAddress(formData.recipient_account) && (
+              <span className="address-valid" role="img" aria-label="Valid Stellar address">
+                {"✓"}
+              </span>
+            )}
+          </div>
+          <FieldError id="err-recipient_account" message={fieldErrors.recipient_account} />
         </div>
 
         <div className="form-group">
