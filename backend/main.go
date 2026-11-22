@@ -64,6 +64,7 @@ func main() {
 	router.Use(middleware.VersionMiddleware())
 	router.Use(middleware.TLSMiddleware())
 	router.Use(middleware.CSRFProtection())
+	router.Use(middleware.SecurityHeadersMiddleware())
 
 	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 

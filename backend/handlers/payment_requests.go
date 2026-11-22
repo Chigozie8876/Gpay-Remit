@@ -109,6 +109,16 @@ func (h *PaymentRequestHandler) GetPaymentRequest(c *gin.Context) {
 		return
 	}
 
+	if paymentRequest.ExpiresAt != nil && time.Now().After(*paymentRequest.ExpiresAt) && paymentRequest.Status == "pending" {
+		paymentRequest.Status = "expired"
+		if err := models.UpdatePaymentRequest(h.db, &paymentRequest); err != nil {
+			c.Error(errors.NewInternalError("Failed to update payment request", err))
+			return
+		}
+		c.Error(errors.NewValidationError("Payment request has expired", nil))
+		return
+	}
+
 	c.JSON(http.StatusOK, paymentRequest)
 }
 
@@ -250,6 +260,16 @@ func (h *PaymentRequestHandler) RejectPaymentRequest(c *gin.Context) {
 		return
 	}
 
+	if paymentRequest.ExpiresAt != nil && time.Now().After(*paymentRequest.ExpiresAt) && paymentRequest.Status == "pending" {
+		paymentRequest.Status = "expired"
+		if err := models.UpdatePaymentRequest(h.db, &paymentRequest); err != nil {
+			c.Error(errors.NewInternalError("Failed to update payment request", err))
+			return
+		}
+		c.Error(errors.NewValidationError("Payment request has expired", nil))
+		return
+	}
+
 	if paymentRequest.Status != "pending" {
 		c.Error(errors.NewValidationError("Payment request is not pending", fmt.Sprintf("Current status: %s", paymentRequest.Status)))
 		return
@@ -304,6 +324,16 @@ func (h *PaymentRequestHandler) CancelPaymentRequest(c *gin.Context) {
 
 	if paymentRequest.RequesterID != userID.(uint) {
 		c.Error(errors.NewForbiddenError("Only the requester can cancel this payment request"))
+		return
+	}
+
+	if paymentRequest.ExpiresAt != nil && time.Now().After(*paymentRequest.ExpiresAt) && paymentRequest.Status == "pending" {
+		paymentRequest.Status = "expired"
+		if err := models.UpdatePaymentRequest(h.db, &paymentRequest); err != nil {
+			c.Error(errors.NewInternalError("Failed to update payment request", err))
+			return
+		}
+		c.Error(errors.NewValidationError("Payment request has expired", nil))
 		return
 	}
 

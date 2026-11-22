@@ -21,9 +21,9 @@ type Contact struct {
 	CreatedAt          time.Time                 `json:"created_at"`
 	UpdatedAt          time.Time                 `json:"updated_at"`
 	DeletedAt          gorm.DeletedAt            `gorm:"index" json:"-"`
-	UserID             uint                      `gorm:"index;not null" json:"user_id"`
+	UserID             uint                      `gorm:"index;not null;uniqueIndex:idx_user_stellar_address" json:"user_id"`
 	Nickname           string                    `gorm:"size:255;not null" json:"nickname"`
-	StellarAddress     string                    `gorm:"size:56;not null" json:"stellar_address"`
+	StellarAddress     string                    `gorm:"size:56;not null;uniqueIndex:idx_user_stellar_address" json:"stellar_address"`
 	Currency           string                    `gorm:"size:12;default:'USDC'" json:"currency"`
 	Email              string                    `gorm:"size:255" json:"email,omitempty"`
 	Notes              string                    `gorm:"size:500" json:"notes,omitempty"`
