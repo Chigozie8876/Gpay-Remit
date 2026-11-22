@@ -188,6 +188,7 @@ fn full_escrow_to_remittance_lifecycle() {
             .into_val(env),
         GpayEvent {
             timestamp: env.ledger().timestamp(),
+            ledger: env.ledger().sequence(),
             actor: w.recipient.clone(),
             amount: AMOUNT - expected_fee,
             status: symbol_short!("released"),
@@ -220,6 +221,7 @@ fn full_escrow_to_remittance_lifecycle() {
             .into_val(env),
         GpayEvent {
             timestamp: env.ledger().timestamp(),
+            ledger: env.ledger().sequence(),
             actor: w.recipient.clone(),
             amount: invoice.total_due,
             status: symbol_short!("paid"),
