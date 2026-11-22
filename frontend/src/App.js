@@ -43,7 +43,7 @@ function App() {
       : false;
   });
 
-  // Persist the preference and mirror it onto <body> for global theming.
+  // Persist the preference and mirror it onto <html>, <body>, and root for global theming (#458).
   useEffect(() => {
     try {
       localStorage.setItem("gpay_dark_mode", String(darkMode));
@@ -51,6 +51,12 @@ function App() {
       // ignore write failures
     }
     document.body.classList.toggle("dark-mode", darkMode);
+    document.body.classList.toggle("dark", darkMode);
+    if (typeof document !== "undefined" && document.documentElement) {
+      document.documentElement.classList.toggle("dark-mode", darkMode);
+      document.documentElement.classList.toggle("dark", darkMode);
+      document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
+    }
   }, [darkMode]);
   // #290: Language State with browser language detection
   const [lang, setLang] = useState(() => {
@@ -80,7 +86,7 @@ function App() {
     <I18nContext.Provider value={{ lang, setLang, t }}>
       <WalletProvider>
         <Router>
-          <div className={`App ${darkMode ? "dark-mode" : ""}`}>
+          <div className={`App ${darkMode ? "dark-mode dark" : ""}`} data-theme={darkMode ? "dark" : "light"}>
             {/* #291: a11y Skip link */}
             <a href="#main-content" className="skip-link">
               {t.skipToMain}
