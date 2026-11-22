@@ -1,9 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
+	"github.com/Gpay-Remit/gpay-remit/logger"
+	"github.com/sirupsen/logrus"
+	"github.com/stellar/go/network"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gormlogger "gorm.io/gorm/logger"
@@ -98,6 +102,7 @@ func validTestConfig() *Config {
 		DatabaseURL:       "postgres://user:pass@localhost:5432/db",
 		StellarNetwork:    "testnet",
 		HorizonURL:        "https://horizon-testnet.stellar.org",
+		NetworkPassphrase: network.TestNetworkPassphrase,
 		JWTSecret:         "a-valid-32-plus-character-secret-value",
 		JWTRefreshSecret:  "another-valid-32-plus-character-secret",
 		PlatformFeeBps:    50,
@@ -330,4 +335,116 @@ func TestLoadConfig_CORSDefaultsAreExplicit(t *testing.T) {
 	assert.Contains(t, cfg.CORSExposedHeaders, "X-RateLimit-Remaining")
 	assert.False(t, cfg.CORSAllowCredentials)
 	assert.Equal(t, 10*time.Minute, cfg.CORSMaxAge)
+}
+
+func TestLoadConfig_StellarPubnetDefaults(t *testing.T) {
+	clearJWTEnv(t)
+	t.Setenv("JWT_SECRET", "a-valid-32-plus-character-secret-value")
+	t.Setenv("JWT_REFRESH_SECRET", "another-valid-32-plus-character-secret")
+	t.Setenv("STELLAR_NETWORK", "pubnet")
+	t.Setenv("STELLAR_HORIZON_URL", "https://horizon.stellar.org")
+	t.Setenv("HORIZON_URL", "")
+	t.Setenv("NETWORK_PASSPHRASE", "")
+
+	cfg, err := LoadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, StellarNetworkPubnet, cfg.StellarNetwork)
+	assert.Equal(t, "https://horizon.stellar.org", cfg.StellarHorizonURL)
+	assert.Equal(t, "https://horizon.stellar.org", cfg.HorizonURL)
+	assert.Equal(t, network.PublicNetworkPassphrase, cfg.NetworkPassphrase)
+}
+
+func TestLoadConfig_StellarHorizonURLTakesPrecedenceOverLegacyURL(t *testing.T) {
+	clearJWTEnv(t)
+	t.Setenv("JWT_SECRET", "a-valid-32-plus-character-secret-value")
+	t.Setenv("JWT_REFRESH_SECRET", "another-valid-32-plus-character-secret")
+	t.Setenv("STELLAR_NETWORK", "testnet")
+	t.Setenv("STELLAR_HORIZON_URL", "https://horizon-testnet.stellar.org")
+	t.Setenv("HORIZON_URL", "https://horizon.stellar.org")
+
+	cfg, err := LoadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "https://horizon-testnet.stellar.org", cfg.StellarHorizonURL)
+	assert.Equal(t, "https://horizon-testnet.stellar.org", cfg.HorizonURL)
+}
+
+func TestLoadConfig_LegacyHorizonURLStillConfiguresClient(t *testing.T) {
+	clearJWTEnv(t)
+	t.Setenv("JWT_SECRET", "a-valid-32-plus-character-secret-value")
+	t.Setenv("JWT_REFRESH_SECRET", "another-valid-32-plus-character-secret")
+	t.Setenv("STELLAR_NETWORK", "testnet")
+	t.Setenv("STELLAR_HORIZON_URL", "")
+	t.Setenv("HORIZON_URL", "https://horizon-testnet.stellar.org")
+
+	cfg, err := LoadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "https://horizon-testnet.stellar.org", cfg.StellarHorizonURL)
+	assert.Equal(t, "https://horizon-testnet.stellar.org", cfg.HorizonURL)
+}
+
+func TestLoadConfig_RejectsHorizonURLMismatchedWithStellarNetwork(t *testing.T) {
+	clearJWTEnv(t)
+	t.Setenv("JWT_SECRET", "a-valid-32-plus-character-secret-value")
+	t.Setenv("JWT_REFRESH_SECRET", "another-valid-32-plus-character-secret")
+	t.Setenv("STELLAR_NETWORK", "pubnet")
+	t.Setenv("STELLAR_HORIZON_URL", "https://horizon-testnet.stellar.org")
+	t.Setenv("HORIZON_URL", "")
+
+	_, err := LoadConfig()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "STELLAR_HORIZON_URL host")
+	assert.Contains(t, err.Error(), "does not match STELLAR_NETWORK")
+}
+
+func TestLoadConfig_RejectsPassphraseMismatchedWithStellarNetwork(t *testing.T) {
+	clearJWTEnv(t)
+	t.Setenv("JWT_SECRET", "a-valid-32-plus-character-secret-value")
+	t.Setenv("JWT_REFRESH_SECRET", "another-valid-32-plus-character-secret")
+	t.Setenv("STELLAR_NETWORK", "testnet")
+	t.Setenv("STELLAR_HORIZON_URL", "https://horizon-testnet.stellar.org")
+	t.Setenv("NETWORK_PASSPHRASE", network.PublicNetworkPassphrase)
+
+	_, err := LoadConfig()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "NETWORK_PASSPHRASE does not match STELLAR_NETWORK")
+}
+
+func TestConfig_Validate_AcceptsCustomHorizonHostWithMatchingPassphrase(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.StellarHorizonURL = "https://horizon.staging.example.com"
+	cfg.NetworkPassphrase = network.TestNetworkPassphrase
+
+	assert.NoError(t, cfg.Validate())
+}
+
+func TestConfig_Validate_RejectsKnownPubnetHostOnTestnetNetwork(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.StellarHorizonURL = "https://horizon.stellar.org"
+
+	err := cfg.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not match STELLAR_NETWORK")
+}
+
+func TestLoadConfig_LogsActiveStellarNetwork(t *testing.T) {
+	clearJWTEnv(t)
+	t.Setenv("JWT_SECRET", "a-valid-32-plus-character-secret-value")
+	t.Setenv("JWT_REFRESH_SECRET", "another-valid-32-plus-character-secret")
+	t.Setenv("STELLAR_NETWORK", "testnet")
+	t.Setenv("STELLAR_HORIZON_URL", "https://horizon-testnet.stellar.org")
+	t.Setenv("HORIZON_URL", "")
+	t.Setenv("NETWORK_PASSPHRASE", "")
+
+	var output bytes.Buffer
+	previousLogger := logger.Log
+	logger.Log = logrus.New()
+	logger.Log.SetOutput(&output)
+	logger.Log.SetFormatter(&logrus.JSONFormatter{})
+	t.Cleanup(func() { logger.Log = previousLogger })
+
+	_, err := LoadConfig()
+	require.NoError(t, err)
+	assert.Contains(t, output.String(), "Active Stellar network configured")
+	assert.Contains(t, output.String(), `"stellar_network":"testnet"`)
+	assert.Contains(t, output.String(), `"horizon_url":"https://horizon-testnet.stellar.org"`)
 }

@@ -26,8 +26,6 @@ type StellarClientInterface interface {
 	SignTx(ctx context.Context, envelopeXDR string, secretKey string) (string, error)
 }
 
-
-
 type StellarClient struct {
 	client            *horizonclient.Client
 	networkPassphrase string
@@ -35,9 +33,17 @@ type StellarClient struct {
 
 func NewStellarClient(horizonURL, networkPassphrase string) StellarClientInterface {
 	return &StellarClient{
-		client:            &horizonclient.Client{HorizonURL: horizonURL},
-		networkPassphrase: networkPassphrase,
+		client:            &horizonclient.Client{HorizonURL: strings.TrimRight(strings.TrimSpace(horizonURL), "/")},
+		networkPassphrase: strings.TrimSpace(networkPassphrase),
 	}
+}
+
+func (s *StellarClient) HorizonURL() string {
+	return s.client.HorizonURL
+}
+
+func (s *StellarClient) NetworkPassphrase() string {
+	return s.networkPassphrase
 }
 
 func WithRequestContext(ctx context.Context, requestID string, userID interface{}) context.Context {
@@ -146,7 +152,6 @@ func (s *StellarClient) BuildPaymentTx(ctx context.Context, sourceAccount txnbui
 	}
 	return tx, nil
 }
-
 
 // SubmitPayment builds, signs, and submits a payment transaction in one go.
 func (s *StellarClient) SubmitPayment(ctx context.Context, sourceSecret string, destination string, assetCode string, issuer string, amount string) (string, error) {

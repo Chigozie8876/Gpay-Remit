@@ -204,7 +204,7 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.GET("/invoices", remittanceHandler.ListInvoices)
 			protected.GET("/invoices/:id", remittanceHandler.GetInvoice)
 
-			contactHandler := handlers.NewContactHandler(db, cfg, utils.NewStellarClient(cfg.HorizonURL, cfg.NetworkPassphrase))
+			contactHandler := handlers.NewContactHandler(db, cfg, utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase))
 			protected.POST("/contacts", contactHandler.CreateContact)
 			protected.GET("/contacts", contactHandler.ListContacts)
 			protected.GET("/contacts/:id", contactHandler.GetContact)
@@ -303,7 +303,7 @@ func registerRoutes(router *gin.Engine, db *gorm.DB, cfg *config.Config) {
 			protected.GET("/invoices", remittanceHandler.ListInvoices)
 			protected.GET("/invoices/:id", remittanceHandler.GetInvoice)
 
-			contactHandler := handlers.NewContactHandler(db, cfg, utils.NewStellarClient(cfg.HorizonURL, cfg.NetworkPassphrase))
+			contactHandler := handlers.NewContactHandler(db, cfg, utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase))
 			protected.POST("/contacts", contactHandler.CreateContact)
 			protected.GET("/contacts", contactHandler.ListContacts)
 			protected.GET("/contacts/:id", contactHandler.GetContact)
