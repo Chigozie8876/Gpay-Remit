@@ -62,6 +62,11 @@ func main() {
 	router.Use(middleware.RequestIDMiddleware())
 	router.Use(middleware.RequestLogger())
 	router.Use(middleware.ErrorHandler())
+	// Cap request bodies to bound memory use (#381). Routes that need a larger
+	// body go in routeBodyLimits, keyed by Gin route pattern, e.g.
+	// "/api/v1/uploads": middleware.UploadMaxBodyBytes.
+	routeBodyLimits := map[string]int64{}
+	router.Use(middleware.BodyLimit(middleware.DefaultMaxBodyBytes, routeBodyLimits))
 	router.Use(middleware.VersionMiddleware())
 	router.Use(middleware.TLSMiddleware())
 	router.Use(middleware.CSRFProtection())
