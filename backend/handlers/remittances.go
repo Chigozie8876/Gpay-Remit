@@ -30,7 +30,7 @@ func NewRemittanceHandler(db *gorm.DB, cfg *config.Config) *RemittanceHandler {
 	return &RemittanceHandler{
 		db:            db,
 		config:        cfg,
-		stellarClient: utils.NewStellarClient(cfg.HorizonURL, cfg.NetworkPassphrase),
+		stellarClient: utils.NewStellarClient(cfg.StellarHorizonURL, cfg.NetworkPassphrase),
 		fees:          services.NewFeeService(cfg),
 		emailService:  services.NewEmailService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPFrom, cfg.EmailEnabled),
 	}

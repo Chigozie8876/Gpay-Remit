@@ -8,6 +8,7 @@ import (
 	"github.com/stellar/go/network"
 	"github.com/stellar/go/txnbuild"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSignTx(t *testing.T) {
@@ -18,7 +19,7 @@ func TestSignTx(t *testing.T) {
 
 	// Create a dummy transaction
 	sourceAccount := txnbuild.SimpleAccount{AccountID: address, Sequence: 1}
-	
+
 	// Use a definitely valid test address
 	destination := "GC7S3S67JVRYCOY6Z7HJSJ6B676B6J6B6J6B6J6B6J6B6J6B6J6B6J6B"
 	// Wait, let's just generate another random kp for the destination to be safe.
@@ -47,7 +48,6 @@ func TestSignTx(t *testing.T) {
 	envelopeXDR, err := tx.Base64()
 	assert.NoError(t, err)
 
-
 	t.Run("Valid signature", func(t *testing.T) {
 		signedXDR, err := SignTx(context.Background(), envelopeXDR, secret, network.TestNetworkPassphrase)
 		assert.NoError(t, err)
@@ -73,6 +73,15 @@ func TestSignTx(t *testing.T) {
 		assert.Error(t, err)
 		assert.Equal(t, "invalid_xdr", signedXDR)
 	})
+}
+
+func TestNewStellarClientUsesConfiguredNetwork(t *testing.T) {
+	client := NewStellarClient("  https://horizon.stellar.org/  ", network.PublicNetworkPassphrase)
+
+	concrete, ok := client.(*StellarClient)
+	require.True(t, ok)
+	assert.Equal(t, "https://horizon.stellar.org", concrete.HorizonURL())
+	assert.Equal(t, network.PublicNetworkPassphrase, concrete.NetworkPassphrase())
 }
 
 func TestBuildPaymentTx(t *testing.T) {
@@ -129,4 +138,3 @@ func TestBuildPaymentTx(t *testing.T) {
 		assert.Equal(t, destination, op.Destination)
 	})
 }
-

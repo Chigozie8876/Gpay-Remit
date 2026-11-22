@@ -57,6 +57,7 @@ if [ ! -f backend/.env ]; then
 PORT=8080
 DATABASE_URL=postgres://gpay:gpay_password@localhost:5432/gpay_remit?sslmode=disable
 STELLAR_NETWORK=testnet
+STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 HORIZON_URL=https://horizon-testnet.stellar.org
 NETWORK_PASSPHRASE=Test SDF Network ; September 2015
 CONTRACT_ID=

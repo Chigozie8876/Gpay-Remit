@@ -15,6 +15,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
+	"github.com/stellar/go/network"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
@@ -28,6 +29,73 @@ var connectionPoolMonitor = struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 }{}
+
+const (
+	StellarNetworkTestnet = "testnet"
+	StellarNetworkPubnet  = "pubnet"
+)
+
+type stellarNetworkSettings struct {
+	horizonURL string
+	passphrase string
+	hosts      []string
+}
+
+var stellarNetworkSettingsByNetwork = map[string]stellarNetworkSettings{
+	StellarNetworkTestnet: {
+		horizonURL: "https://horizon-testnet.stellar.org",
+		passphrase: network.TestNetworkPassphrase,
+		hosts:      []string{"horizon-testnet.stellar.org"},
+	},
+	StellarNetworkPubnet: {
+		horizonURL: "https://horizon.stellar.org",
+		passphrase: network.PublicNetworkPassphrase,
+		hosts:      []string{"horizon.stellar.org", "horizon-mainnet.stellar.org"},
+	},
+}
+
+func canonicalStellarNetwork(value string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case StellarNetworkTestnet:
+		return StellarNetworkTestnet, true
+	case StellarNetworkPubnet, "public", "mainnet":
+		return StellarNetworkPubnet, true
+	default:
+		return "", false
+	}
+}
+
+func settingsForStellarNetwork(value string) (stellarNetworkSettings, string, bool) {
+	networkName, ok := canonicalStellarNetwork(value)
+	if !ok {
+		return stellarNetworkSettings{}, "", false
+	}
+	return stellarNetworkSettingsByNetwork[networkName], networkName, true
+}
+
+func isKnownHorizonHost(host string) bool {
+	for _, settings := range stellarNetworkSettingsByNetwork {
+		for _, knownHost := range settings.hosts {
+			if strings.EqualFold(host, knownHost) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func horizonHostMatchesNetwork(host, networkName string) bool {
+	settings, ok := stellarNetworkSettingsByNetwork[networkName]
+	if !ok {
+		return false
+	}
+	for _, knownHost := range settings.hosts {
+		if strings.EqualFold(host, knownHost) {
+			return true
+		}
+	}
+	return false
+}
 
 func startConnectionPoolMonitor(db *sql.DB) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -72,6 +140,7 @@ type Config struct {
 	TLSEnabled        bool
 	DatabaseURL       string
 	StellarNetwork    string
+	StellarHorizonURL string
 	HorizonURL        string
 	ContractID        string
 	EscrowContractID  string
@@ -211,12 +280,17 @@ func LoadConfig() (*Config, error) {
 		"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset",
 	})
 
-	// When sandbox mode is active, apply testnet-friendly defaults that
-	// differ from production. Individual env vars still take precedence
-	// so developers can override any single value.
-	stellarNetwork := getEnvOrDefault("STELLAR_NETWORK", "testnet")
-	horizonURL := getEnvOrDefault("HORIZON_URL", "https://horizon-testnet.stellar.org")
-	networkPassphrase := getEnvOrDefault("NETWORK_PASSPHRASE", "Test SDF Network ; September 2015")
+	// Stellar network selection and Horizon endpoint. STELLAR_HORIZON_URL is
+	// the canonical setting; HORIZON_URL remains a backwards-compatible alias.
+	// The passphrase is derived from STELLAR_NETWORK so the same binary can be
+	// pointed at testnet or pubnet at runtime.
+	requestedNetwork := strings.TrimSpace(getEnvOrDefault("STELLAR_NETWORK", StellarNetworkTestnet))
+	networkSettings, stellarNetwork, networkKnown := settingsForStellarNetwork(requestedNetwork)
+	if !networkKnown {
+		stellarNetwork = strings.ToLower(requestedNetwork)
+	}
+	horizonURL := strings.TrimSpace(getEnvOrDefault("STELLAR_HORIZON_URL", getEnvOrDefault("HORIZON_URL", networkSettings.horizonURL)))
+	networkPassphrase := strings.TrimSpace(getEnvOrDefault("NETWORK_PASSPHRASE", networkSettings.passphrase))
 	platformFeeBps := getEnvAsInt("PLATFORM_FEE_BPS", 50)
 	forexFeeBps := getEnvAsInt("FOREX_FEE_BPS", 25)
 	complianceFeeBps := getEnvAsInt("COMPLIANCE_FEE_BPS", 10)
@@ -224,13 +298,14 @@ func LoadConfig() (*Config, error) {
 
 	if sandbox {
 		if !isEnvSet("STELLAR_NETWORK") {
-			stellarNetwork = "testnet"
+			stellarNetwork = StellarNetworkTestnet
+			networkSettings = stellarNetworkSettingsByNetwork[StellarNetworkTestnet]
 		}
-		if !isEnvSet("HORIZON_URL") {
-			horizonURL = "https://horizon-testnet.stellar.org"
+		if !isEnvSet("STELLAR_HORIZON_URL") && !isEnvSet("HORIZON_URL") {
+			horizonURL = networkSettings.horizonURL
 		}
 		if !isEnvSet("NETWORK_PASSPHRASE") {
-			networkPassphrase = "Test SDF Network ; September 2015"
+			networkPassphrase = networkSettings.passphrase
 		}
 		// Reduced fee rates for sandbox — lower barrier for testing
 		if !isEnvSet("PLATFORM_FEE_BPS") {
@@ -252,6 +327,7 @@ func LoadConfig() (*Config, error) {
 		Environment:       getEnvOrDefault("APP_ENV", "development"),
 		DatabaseURL:       os.Getenv("DATABASE_URL"),
 		StellarNetwork:    stellarNetwork,
+		StellarHorizonURL: horizonURL,
 		HorizonURL:        horizonURL,
 		ContractID:        os.Getenv("CONTRACT_ID"),
 		EscrowContractID:  os.Getenv("ESCROW_CONTRACT_ID"),
@@ -298,6 +374,12 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	logger.Log.WithFields(map[string]interface{}{
+		"stellar_network":    cfg.StellarNetwork,
+		"horizon_url":        cfg.HorizonURL,
+		"network_passphrase": cfg.NetworkPassphrase,
+	}).Info("Active Stellar network configured")
+
 	return cfg, nil
 }
 
@@ -341,18 +423,28 @@ func (c *Config) Validate() error {
 		errs = append(errs, "JWT_REFRESH_SECRET must be at least 32 characters long")
 	}
 
-	// 5. Stellar Network & Horizon URL
-	validNetworks := map[string]bool{
-		"testnet":    true,
-		"public":     true,
-		"standalone": true,
-		"futurenet":  true,
-	}
-	if !validNetworks[strings.ToLower(c.StellarNetwork)] {
-		errs = append(errs, fmt.Sprintf("STELLAR_NETWORK must be one of 'testnet', 'public', 'futurenet', 'standalone' (got %q)", c.StellarNetwork))
-	}
-	if !strings.HasPrefix(c.HorizonURL, "http://") && !strings.HasPrefix(c.HorizonURL, "https://") {
-		errs = append(errs, fmt.Sprintf("HORIZON_URL must be a valid HTTP/HTTPS URL (got %q)", c.HorizonURL))
+	// 5. Stellar network, Horizon URL and passphrase consistency
+	settings, networkName, networkKnown := settingsForStellarNetwork(c.StellarNetwork)
+	if !networkKnown {
+		errs = append(errs, fmt.Sprintf("STELLAR_NETWORK must be one of 'testnet', 'pubnet' (got %q)", c.StellarNetwork))
+	} else {
+		if passphrase := strings.TrimSpace(c.NetworkPassphrase); passphrase != "" && passphrase != settings.passphrase {
+			errs = append(errs, fmt.Sprintf("NETWORK_PASSPHRASE does not match STELLAR_NETWORK=%q (expected %q)", networkName, settings.passphrase))
+		}
+
+		effectiveURL := strings.TrimSpace(c.StellarHorizonURL)
+		if effectiveURL == "" {
+			effectiveURL = strings.TrimSpace(c.HorizonURL)
+		}
+		parsedURL, parseErr := url.Parse(effectiveURL)
+		if parseErr != nil || (strings.ToLower(parsedURL.Scheme) != "http" && strings.ToLower(parsedURL.Scheme) != "https") || strings.TrimSpace(parsedURL.Host) == "" {
+			errs = append(errs, fmt.Sprintf("STELLAR_HORIZON_URL must be a valid HTTP/HTTPS URL (got %q); HORIZON_URL must be a valid HTTP/HTTPS URL (got %q)", c.StellarHorizonURL, c.HorizonURL))
+		} else {
+			host := parsedURL.Hostname()
+			if isKnownHorizonHost(host) && !horizonHostMatchesNetwork(host, networkName) {
+				errs = append(errs, fmt.Sprintf("STELLAR_HORIZON_URL host %q does not match STELLAR_NETWORK=%q (expected %s)", host, networkName, strings.Join(settings.hosts, " or ")))
+			}
+		}
 	}
 
 	// 6. Fee validation
@@ -653,9 +745,10 @@ func isEnvSet(key string) bool {
 // values after a temporary override.
 func (c *Config) ResetSandbox() {
 	c.SandboxMode = true
-	c.StellarNetwork = "testnet"
+	c.StellarNetwork = StellarNetworkTestnet
+	c.StellarHorizonURL = "https://horizon-testnet.stellar.org"
 	c.HorizonURL = "https://horizon-testnet.stellar.org"
-	c.NetworkPassphrase = "Test SDF Network ; September 2015"
+	c.NetworkPassphrase = network.TestNetworkPassphrase
 	c.PlatformFeeBps = 10
 	c.ForexFeeBps = 5
 	c.ComplianceFeeBps = 0

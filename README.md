@@ -105,8 +105,8 @@ npm start
 
 Copy `.env.example` to `.env` and configure:
 
-- `STELLAR_NETWORK`: testnet or futurenet
-- `HORIZON_URL`: Stellar Horizon API endpoint
+- `STELLAR_NETWORK`: testnet or pubnet (network passphrase is derived automatically)
+- `STELLAR_HORIZON_URL`: Stellar Horizon API endpoint (`HORIZON_URL` is accepted as a backwards-compatible alias)
 - `DATABASE_URL`: PostgreSQL connection string
 - `CONTRACT_ID`: Deployed Soroban contract ID
 
