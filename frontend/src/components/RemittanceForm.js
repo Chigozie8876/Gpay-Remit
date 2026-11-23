@@ -147,7 +147,7 @@ function RemittanceForm() {
       <h2 id="remittance-heading">Send Remittance</h2>
 
       {!isOnline && (
-        <div role="alert" className="offline-warning" style={{ background: "#ffebee", color: "#c62828", padding: "10px", borderRadius: "6px", marginBottom: "16px" }}>
+        <div role="alert" className="offline-warning alert-error">
           ⚠️ You are currently offline. Please check your connection.
         </div>
       )}

@@ -30,29 +30,52 @@ function detectBrowserLanguage() {
   return "en";
 }
 
+function readStoredDarkMode() {
+  try {
+    const stored = localStorage.getItem("gpay_dark_mode");
+    if (stored === "true" || stored === "false") return stored === "true";
+  } catch {
+    // storage unavailable (private mode / blocked): fall back to OS preference
+  }
+  return null;
+}
+
 function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
-  // #288: Dark Mode State
+  // #288 / #458: Dark Mode State
   // Initial value: saved preference, else the OS colour-scheme preference.
+  const [hasStoredTheme, setHasStoredTheme] = useState(() => readStoredDarkMode() !== null);
   const [darkMode, setDarkMode] = useState(() => {
-    try {
-      const stored = localStorage.getItem("gpay_dark_mode");
-      if (stored === "true" || stored === "false") return stored === "true";
-    } catch {
-      // storage unavailable (private mode / blocked): fall back to OS preference
-    }
+    const stored = readStoredDarkMode();
+    if (stored !== null) return stored;
     return typeof window !== "undefined" && typeof window.matchMedia === "function"
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
       : false;
   });
+  const [themeAnnouncement, setThemeAnnouncement] = useState("");
 
-  // Persist the preference and mirror it onto <html>, <body>, and root for global theming (#458).
+  // Follow OS prefers-color-scheme changes only when the user has not stored a choice.
   useEffect(() => {
-    try {
-      localStorage.setItem("gpay_dark_mode", String(darkMode));
-    } catch {
-      // ignore write failures
+    if (hasStoredTheme || typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
     }
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (event) => {
+      setDarkMode(event.matches);
+    };
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+    if (typeof mediaQuery.addListener === "function") {
+      mediaQuery.addListener(handleChange);
+      return () => mediaQuery.removeListener(handleChange);
+    }
+    return undefined;
+  }, [hasStoredTheme]);
+
+  // Mirror theme onto <html>, <body>, and root for global theming (#458).
+  useEffect(() => {
     document.body.classList.toggle("dark-mode", darkMode);
     document.body.classList.toggle("dark", darkMode);
     if (typeof document !== "undefined" && document.documentElement) {
@@ -61,6 +84,18 @@ function App() {
       document.documentElement.setAttribute("data-theme", darkMode ? "dark" : "light");
     }
   }, [darkMode]);
+
+  const toggleDarkMode = () => {
+    const next = !darkMode;
+    setDarkMode(next);
+    setHasStoredTheme(true);
+    setThemeAnnouncement(next ? "Dark mode enabled" : "Light mode enabled");
+    try {
+      localStorage.setItem("gpay_dark_mode", String(next));
+    } catch {
+      // ignore write failures
+    }
+  };
   // #290: Language State with browser language detection
   const [lang, setLang] = useState(() => {
     return localStorage.getItem("gpay_lang") || detectBrowserLanguage();
@@ -109,12 +144,17 @@ function App() {
                     <option value="fr">FR</option>
                   </select>
                   <button
-                    onClick={() => setDarkMode(!darkMode)}
-                    aria-label={t.toggleDark}
+                    type="button"
+                    onClick={toggleDarkMode}
+                    aria-pressed={darkMode}
+                    aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
                     className="theme-toggle"
                   >
                     {darkMode ? "☀️" : "🌙"}
                   </button>
+                  <span className="sr-only" aria-live="polite">
+                    {themeAnnouncement}
+                  </span>
                   <button
                     type="button"
                     className="tour-nav-btn"
