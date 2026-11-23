@@ -4,8 +4,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Gpay-Remit/gpay-remit/config"
@@ -16,6 +18,7 @@ import (
 	"github.com/Gpay-Remit/gpay-remit/utils"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type RemittanceHandler struct {
@@ -134,8 +137,8 @@ type CreateRemittanceRequest struct {
 }
 
 type BatchPaymentItem struct {
-	RecipientAccount string                 `json:"recipient_account" binding:"required"`
-	Amount           int64                  `json:"amount" binding:"required,gt=0"`
+	RecipientAccount string                 `json:"recipient_account"`
+	Amount           int64                  `json:"amount"`
 	Conditions       map[string]interface{} `json:"conditions"`
 	Notes            string                 `json:"notes"`
 }
@@ -144,7 +147,22 @@ type CreateBatchRemittanceRequest struct {
 	SenderAccount string             `json:"sender_account" binding:"required"`
 	AssetCode     string             `json:"asset_code" binding:"required"`
 	AssetIssuer   string             `json:"asset_issuer"`
-	Payments      []BatchPaymentItem `json:"payments" binding:"required,min=1,max=100"`
+	Payments      []BatchPaymentItem `json:"payments" binding:"required"`
+}
+
+type BatchItemError struct {
+	Index int    `json:"index"`
+	Error string `json:"error"`
+}
+
+type BatchPaymentResult struct {
+	Index            int                   `json:"index"`
+	RemittanceID     uint                  `json:"remittance_id"`
+	Status           string                `json:"status"`
+	RecipientAccount string                `json:"recipient_account"`
+	Amount           int64                 `json:"amount"`
+	Fee              int64                 `json:"fee"`
+	FeeBreakdown     services.FeeBreakdown `json:"fee_breakdown"`
 }
 
 type SendRemittanceRequest struct {
@@ -221,30 +239,24 @@ func (h *RemittanceHandler) CreateRemittance(c *gin.Context) {
 	// In a real app, we'd lookup or create the recipient user.
 	// For now, we'll just set RecipientID to 0 if not found, or use a placeholder.
 
-	conditionsJSON, _ := json.Marshal(req.Conditions)
-
-	feeBreakdown := h.fees.Calculate(req.Amount)
-	payment := models.Payment{
+	params := services.RemittanceCreateParams{
 		SenderID:         userID.(uint),
 		SenderAccount:    req.SenderAccount,
 		RecipientAccount: req.RecipientAccount,
 		Amount:           req.Amount,
-		Currency:         req.AssetCode,
-		Status:           "pending",
-		Fee:              feeBreakdown.TotalFee,
-		PlatformFee:      feeBreakdown.PlatformFee,
-		ForexFee:         feeBreakdown.ForexFee,
-		ComplianceFee:    feeBreakdown.ComplianceFee,
-		NetworkFee:       feeBreakdown.NetworkFee,
-		Conditions:       string(conditionsJSON),
+		AssetCode:        req.AssetCode,
+		Conditions:       req.Conditions,
 		Notes:            req.Notes,
 	}
 
+	var payment *models.Payment
+	var feeBreakdown services.FeeBreakdown
 	var xdr string
 	err := h.db.Transaction(func(tx *gorm.DB) error {
-		// DB Save
-		if err := tx.Create(&payment).Error; err != nil {
-			return err
+		var txErr error
+		payment, feeBreakdown, txErr = services.CreateRemittanceInTx(tx, h.fees, params)
+		if txErr != nil {
+			return txErr
 		}
 
 		// Stellar Integration: Build escrow transaction envelope
@@ -279,79 +291,172 @@ func (h *RemittanceHandler) CreateRemittance(c *gin.Context) {
 	c.JSON(http.StatusCreated, response)
 }
 
+func (h *RemittanceHandler) maxBatchSize() int {
+	if h.config != nil && h.config.MaxBatchSize > 0 {
+		return h.config.MaxBatchSize
+	}
+	return 100
+}
+
 func (h *RemittanceHandler) CreateBatchRemittance(c *gin.Context) {
+	userIDVal, exists := c.Get("userID")
+	if !exists {
+		c.Error(errors.NewUnauthorizedError("Unauthorized"))
+		return
+	}
+	userID, ok := userIDVal.(uint)
+	if !ok {
+		c.Error(errors.NewUnauthorizedError("Invalid user context"))
+		return
+	}
+
 	var req CreateBatchRemittanceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("Invalid request body", err.Error()))
 		return
 	}
 
-	ctx := utils.WithRequestContext(c.Request.Context(), c.GetString("requestID"), nil)
+	req.SenderAccount = strings.TrimSpace(req.SenderAccount)
+	req.AssetCode = strings.ToUpper(strings.TrimSpace(req.AssetCode))
 
-	// Validate sender account
+	maxBatch := h.maxBatchSize()
+	if len(req.Payments) == 0 {
+		c.Error(errors.NewValidationError("Batch payments list cannot be empty", nil))
+		return
+	}
+	if len(req.Payments) > maxBatch {
+		c.Error(errors.NewValidationError(fmt.Sprintf("Batch size cannot exceed %d payments", maxBatch), nil))
+		return
+	}
+
+	// Verify sender account belongs to the authenticated user.
+	var sender models.User
+	if err := h.db.First(&sender, userID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.Error(errors.NewUnauthorizedError("Authenticated user not found"))
+		} else {
+			c.Error(errors.NewInternalError("Failed to verify sender account", err))
+		}
+		return
+	}
+	if !sender.IsActive {
+		c.Error(errors.NewForbiddenError("Sender account is inactive"))
+		return
+	}
+	if sender.StellarAddress == "" || req.SenderAccount != sender.StellarAddress {
+		c.Error(errors.NewForbiddenError("Sender account does not belong to the authenticated user"))
+		return
+	}
+
+	ctx := utils.WithRequestContext(c.Request.Context(), c.GetString("requestID"), userID)
+
 	if err := h.stellarClient.ValidateAccount(ctx, req.SenderAccount); err != nil {
 		c.Error(errors.NewValidationError("Invalid sender account", err.Error()))
 		return
 	}
 
-	userID, exists := c.Get("userID")
-	if !exists {
-		c.Error(errors.NewUnauthorizedError("Unauthorized"))
+	// Validate all entries before creating any database records.
+	var itemErrors []BatchItemError
+	var totalAmount int64
+	var totalFees int64
+	for i, item := range req.Payments {
+		recipient := strings.TrimSpace(item.RecipientAccount)
+		if recipient == "" {
+			itemErrors = append(itemErrors, BatchItemError{Index: i, Error: "recipient_account is required"})
+			continue
+		}
+		if item.Amount <= 0 {
+			itemErrors = append(itemErrors, BatchItemError{Index: i, Error: "amount must be greater than 0"})
+			continue
+		}
+		if err := h.stellarClient.ValidateAccount(ctx, recipient); err != nil {
+			itemErrors = append(itemErrors, BatchItemError{Index: i, Error: fmt.Sprintf("invalid recipient account: %v", err)})
+			continue
+		}
+
+		fee := h.fees.Calculate(item.Amount)
+		if totalAmount > math.MaxInt64-item.Amount || totalFees > math.MaxInt64-fee.TotalFee {
+			itemErrors = append(itemErrors, BatchItemError{Index: i, Error: "aggregate batch amount exceeds maximum limit"})
+			continue
+		}
+		totalAmount += item.Amount
+		totalFees += fee.TotalFee
+	}
+
+	if len(itemErrors) > 0 {
+		c.Error(errors.NewValidationError("One or more batch items are invalid", itemErrors))
 		return
 	}
-	ctx = utils.WithRequestContext(ctx, c.GetString("requestID"), userID)
+
+	if totalAmount > math.MaxInt64-totalFees {
+		c.Error(errors.NewValidationError("Aggregate batch amount and fees exceed maximum limit", nil))
+		return
+	}
 
 	var payments []models.Payment
-	tx := h.db.Begin()
-	if tx.Error != nil {
-		c.Error(errors.NewInternalError("Failed to start transaction", tx.Error))
-		return
-	}
+	var results []BatchPaymentResult
+	var failedIndex = -1
 
-	for _, p := range req.Payments {
-		if err := h.stellarClient.ValidateAccount(ctx, p.RecipientAccount); err != nil {
-			tx.Rollback()
-			c.Error(errors.NewValidationError("Invalid recipient account", fmt.Sprintf("Account %s is invalid", p.RecipientAccount)))
-			return
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		// Lock sender user row on PostgreSQL to serialize concurrent batch requests.
+		var lockedSender models.User
+		lockQuery := tx
+		if tx.Dialector.Name() == "postgres" {
+			lockQuery = lockQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := lockQuery.First(&lockedSender, userID).Error; err != nil {
+			return err
 		}
 
-		conditionsJSON, _ := json.Marshal(p.Conditions)
-		feeBreakdown := h.fees.Calculate(p.Amount)
-
-		payment := models.Payment{
-			SenderID:         userID.(uint),
-			SenderAccount:    req.SenderAccount,
-			RecipientAccount: p.RecipientAccount,
-			Amount:           p.Amount,
-			Currency:         req.AssetCode,
-			Status:           "pending",
-			Fee:              feeBreakdown.TotalFee,
-			PlatformFee:      feeBreakdown.PlatformFee,
-			ForexFee:         feeBreakdown.ForexFee,
-			ComplianceFee:    feeBreakdown.ComplianceFee,
-			NetworkFee:       feeBreakdown.NetworkFee,
-			Conditions:       string(conditionsJSON),
-			Notes:            p.Notes,
+		for i, item := range req.Payments {
+			params := services.RemittanceCreateParams{
+				SenderID:         userID,
+				SenderAccount:    req.SenderAccount,
+				RecipientAccount: strings.TrimSpace(item.RecipientAccount),
+				Amount:           item.Amount,
+				AssetCode:        req.AssetCode,
+				Conditions:       item.Conditions,
+				Notes:            item.Notes,
+			}
+			payment, feeBreakdown, err := services.CreateRemittanceInTx(tx, h.fees, params)
+			if err != nil {
+				failedIndex = i
+				return err
+			}
+			payments = append(payments, *payment)
+			results = append(results, BatchPaymentResult{
+				Index:            i,
+				RemittanceID:     payment.ID,
+				Status:           payment.Status,
+				RecipientAccount: payment.RecipientAccount,
+				Amount:           payment.Amount,
+				Fee:              payment.Fee,
+				FeeBreakdown:     feeBreakdown,
+			})
 		}
-
-		if err := tx.Create(&payment).Error; err != nil {
-			tx.Rollback()
-			c.Error(errors.NewInternalError("Failed to create remittance record", err))
-			return
-		}
-
-		payments = append(payments, payment)
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		c.Error(errors.NewInternalError("Failed to commit transaction", err))
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"message":  "Batch remittance initiated successfully",
-		"payments": payments,
+		return nil
 	})
+
+	if err != nil {
+		if failedIndex >= 0 {
+			c.Error(errors.NewInternalError(fmt.Sprintf("Failed to create batch remittance at item index %d", failedIndex), err))
+		} else {
+			c.Error(errors.NewInternalError("Failed to create batch remittance", err))
+		}
+		return
+	}
+
+	response := gin.H{
+		"message":      "Batch remittance initiated successfully",
+		"total_amount": totalAmount,
+		"total_fees":   totalFees,
+		"results":      results,
+		"payments":     payments,
+	}
+
+	middleware.SetIdempotencyResponse(c, response)
+
+	c.JSON(http.StatusCreated, response)
 }
 
 func (h *RemittanceHandler) GetRemittance(c *gin.Context) {
