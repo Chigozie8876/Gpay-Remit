@@ -525,6 +525,124 @@ main:focus {
   }
 }
 
+/* #455: Payment Tags, Filter Chips, Summary Dashboard, and Autocomplete Combobox */
+.tag-filter-bar,
+.tag-summary-card {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.tag-combobox-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tag-combobox-label {
+  font-weight: 600;
+}
+
+.tag-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--badge-bg);
+  color: var(--badge-text);
+  border: 1px solid var(--badge-border);
+  border-radius: 9999px;
+  padding: 4px 10px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.tag-chip-remove {
+  background: transparent;
+  color: var(--badge-text);
+  border: none;
+  padding: 0 4px;
+  min-width: 28px;
+  min-height: 28px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.tag-combobox-input-wrap {
+  position: relative;
+}
+
+.tag-combobox-input-wrap input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  font-size: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
+  border-radius: 4px;
+}
+
+.tag-listbox {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 50;
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 4px 0;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px var(--shadow-strong);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.tag-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.tag-option.is-active,
+.tag-option:hover {
+  background: var(--badge-bg);
+  color: var(--badge-text);
+}
+
+.tag-option-count {
+  font-size: 0.8rem;
+  color: var(--muted-text);
+}
+
+.tag-asset-total {
+  display: inline-block;
+  margin-right: 12px;
+  font-weight: 600;
+}
+
+.tag-edit-btn {
+  margin-top: 6px;
+  padding: 6px 12px;
+  font-size: 0.875rem;
+}
+
 .feature-card {
   background: var(--surface);
   color: var(--text);

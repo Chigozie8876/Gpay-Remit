@@ -108,6 +108,17 @@ describe("Responsive Layout & Mobile Navigation (#456)", () => {
         cy.get('form button[type="submit"]').click();
         cy.wait("@sendRemittance");
       });
+
+      if (vp.isMobile) {
+        it("renders payment tags and tag filter cleanly on mobile", () => {
+          cy.visit("/transactions");
+          cy.get("#tx-tag-filter").should("be.visible");
+          cy.get(".tag-chip").contains("family").should("be.visible");
+          cy.window().then((win) => {
+            expect(win.document.documentElement.scrollWidth).to.be.at.most(win.innerWidth);
+          });
+        });
+      }
     });
   });
 });

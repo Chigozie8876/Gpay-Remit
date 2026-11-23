@@ -19,6 +19,7 @@ type RemittanceCreateParams struct {
 	TargetCurrency   string
 	Conditions       map[string]interface{}
 	Notes            string
+	Tags             []string
 }
 
 // CreateRemittanceInTx creates a pending Payment record inside the provided database transaction.
@@ -62,10 +63,25 @@ func CreateRemittanceInTx(tx *gorm.DB, fees *FeeService, params RemittanceCreate
 		NetworkFee:       feeBreakdown.NetworkFee,
 		Conditions:       conditionsStr,
 		Notes:            params.Notes,
+		Tags:             []string{},
 	}
 
 	if err := tx.Create(&payment).Error; err != nil {
 		return nil, FeeBreakdown{}, err
+	}
+
+	if len(params.Tags) > 0 {
+		for _, tag := range params.Tags {
+			pt := models.PaymentTag{
+				PaymentID: payment.ID,
+				UserID:    params.SenderID,
+				Tag:       tag,
+			}
+			if err := tx.Create(&pt).Error; err != nil {
+				return nil, FeeBreakdown{}, err
+			}
+		}
+		payment.Tags = append([]string{}, params.Tags...)
 	}
 
 	return &payment, feeBreakdown, nil
