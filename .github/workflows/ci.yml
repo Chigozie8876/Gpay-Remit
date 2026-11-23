@@ -56,6 +56,9 @@ jobs:
           echo "Reproduce: cd contracts && PROPTEST_RNG_SEED=$PROPTEST_RNG_SEED PROPTEST_CASES=$PROPTEST_CASES cargo test --all-features"
           cargo test --locked --all-features --no-fail-fast
 
+      - name: Validate contract regression snapshots
+        run: python3 scripts/check_contract_snapshots.py
+
       - name: Upload proptest regressions
         if: failure()
         uses: actions/upload-artifact@v4
@@ -233,6 +236,10 @@ jobs:
         env:
           CI: false
         run: npm run build
+
+      - name: Analyze frontend bundle and enforce size budgets
+        working-directory: ./frontend
+        run: npm run analyze:bundle
 
       - name: Run frontend tests with coverage
         working-directory: ./frontend
