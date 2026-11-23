@@ -80,6 +80,7 @@ func main() {
 	}
 
 	baseCtx, cancelWorkers := context.WithCancel(context.Background())
+	utils.StartRedisStatsCollector(baseCtx, 30*time.Second)
 	var wg sync.WaitGroup
 	middleware.StartIdempotencyCleanupScheduler(baseCtx, &wg, db, time.Hour)
 	workers.StartMonitor(baseCtx, &wg)

@@ -36,6 +36,20 @@ func NewRemittanceHandler(db *gorm.DB, cfg *config.Config) *RemittanceHandler {
 	}
 }
 
+// NewRemittanceHandlerWithStellarClient allows tests and alternate runtime
+// environments to provide a Stellar client implementation.
+func NewRemittanceHandlerWithStellarClient(
+	db *gorm.DB,
+	cfg *config.Config,
+	client utils.StellarClientInterface,
+) *RemittanceHandler {
+	handler := NewRemittanceHandler(db, cfg)
+	if client != nil {
+		handler.stellarClient = client
+	}
+	return handler
+}
+
 const (
 	// MaxPage prevents integer overflow in offset calculation (#198)
 	MaxPage = 10000
