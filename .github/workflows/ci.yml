@@ -40,6 +40,14 @@ jobs:
             contracts/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
 
+      - name: Check formatting
+        working-directory: ./contracts
+        run: cargo fmt --check
+
+      - name: Run clippy
+        working-directory: ./contracts
+        run: cargo clippy --all-targets -- -D warnings
+
       # --all-features also compiles and runs the feature-gated suites
       # (`prop` -> tests/prop_conditions.rs, `integration` ->
       # tests/integration_remittance.rs). tests/fuzz_*.rs are proptest-based
@@ -160,6 +168,12 @@ jobs:
           # cannot build the module at all.
           go-version: "1.25"
 
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: backend
+          args: --timeout=5m
+
       - name: Configure Redis cache eviction policy
         env:
           REDIS_MAXMEMORY: 256mb
@@ -230,6 +244,14 @@ jobs:
       - name: Install dependencies
         working-directory: ./frontend
         run: npm ci
+
+      - name: Run frontend lint
+        working-directory: ./frontend
+        run: npm run lint
+
+      - name: Check frontend formatting
+        working-directory: ./frontend
+        run: npm run format:check
 
       - name: Build frontend
         working-directory: ./frontend

@@ -250,7 +250,7 @@ function RemittanceForm() {
               aria-describedby={fieldErrors.currency ? "err-currency" : undefined}
               aria-invalid={!!fieldErrors.currency}
             >
-              {["USD","EUR","GBP","XLM","NGN","KES","GHS"].map((c) => (
+              {["USD", "EUR", "GBP", "XLM", "NGN", "KES", "GHS"].map((c) => (
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
@@ -267,7 +267,7 @@ function RemittanceForm() {
               aria-describedby={fieldErrors.target_currency ? "err-target_currency" : undefined}
               aria-invalid={!!fieldErrors.target_currency}
             >
-              {["USD","EUR","GBP","XLM","NGN","KES","GHS"].map((c) => (
+              {["USD", "EUR", "GBP", "XLM", "NGN", "KES", "GHS"].map((c) => (
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
