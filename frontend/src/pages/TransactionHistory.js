@@ -98,7 +98,8 @@ function TransactionHistory() {
       {error && <p role="alert" className="error">{error}</p>}
 
       {!loading && !error && (
-        <table aria-labelledby="tx-history-heading">
+        <div className="table-responsive">
+          <table aria-labelledby="tx-history-heading">
           <thead>
             <tr>
               <th scope="col">ID</th><th scope="col">Sender</th><th scope="col">Recipient</th>
@@ -138,6 +139,7 @@ function TransactionHistory() {
             )}
           </tbody>
         </table>
+        </div>
       )}
 
       {!error && (

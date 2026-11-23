@@ -189,3 +189,40 @@ describe("App Theming & Core Rendering (#458)", () => {
     }
   });
 });
+
+describe("Mobile Navigation Menu (#456)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("toggles mobile menu, updates aria-expanded, and closes on Escape with focus return", () => {
+    render(<App />);
+    const menuBtn = screen.getByRole("button", { name: /open navigation menu/i });
+    expect(menuBtn).toHaveAttribute("aria-expanded", "false");
+    expect(menuBtn).toHaveAttribute("aria-controls", "mobile-nav-menu");
+
+    const panel = document.getElementById("mobile-nav-menu");
+    expect(panel).toHaveAttribute("hidden");
+
+    fireEvent.click(menuBtn);
+    expect(menuBtn).toHaveAttribute("aria-expanded", "true");
+    expect(panel).not.toHaveAttribute("hidden");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(menuBtn).toHaveAttribute("aria-expanded", "false");
+    expect(panel).toHaveAttribute("hidden");
+    expect(document.activeElement).toBe(menuBtn);
+  });
+
+  test("closes mobile menu when a mobile navigation link is clicked", () => {
+    render(<App />);
+    const menuBtn = screen.getByRole("button", { name: /open navigation menu/i });
+    fireEvent.click(menuBtn);
+    expect(menuBtn).toHaveAttribute("aria-expanded", "true");
+
+    const mobileNav = screen.getByRole("navigation", { name: /mobile navigation/i });
+    const historyLink = mobileNav.querySelector('a[href="/transactions"]');
+    fireEvent.click(historyLink);
+    expect(menuBtn).toHaveAttribute("aria-expanded", "false");
+  });
+});

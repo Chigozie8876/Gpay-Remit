@@ -221,7 +221,10 @@ main {
 .form-group select,
 .form-group textarea {
   width: 100%;
-  padding: 10px;
+  box-sizing: border-box;
+  min-height: 44px;
+  font-size: 16px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   background-color: var(--input-bg);
   color: var(--text);
@@ -232,6 +235,7 @@ main {
 button {
   background-color: var(--primary);
   color: var(--primary-text);
+  min-height: 44px;
   padding: 12px 24px;
   border: none;
   border-radius: 4px;
@@ -344,26 +348,180 @@ main:focus {
   color: var(--header-text);
   font-size: 1.2rem;
   cursor: pointer;
-  padding: 5px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 5px 10px;
 }
 
-/* #289: Mobile Responsive Design */
-@media (max-width: 600px) {
-  .header-brand-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
+.mobile-menu-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary-tint);
+  border: 1px solid var(--primary-tint-border);
+  color: var(--header-text);
+  font-size: 1.25rem;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+.mobile-nav-panel {
+  display: none;
+}
+
+.table-responsive {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tx-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tx-filters input,
+.tx-filters select {
+  min-height: 44px;
+  font-size: 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  background-color: var(--input-bg);
+  color: var(--text);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.tx-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.tx-pagination select {
+  min-height: 44px;
+  font-size: 16px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  background-color: var(--input-bg);
+  color: var(--text);
+  border-radius: 4px;
+}
+
+/* #456: Documented responsive breakpoints:
+   - Tablet: <= 900px
+   - Mobile: <= 640px
+   Desktop (> 900px) uses the default layout above. */
+@media (max-width: 900px) {
+  main {
+    margin: 24px auto;
+    padding: 16px;
   }
-  .header-controls {
+  .App-header nav.desktop-nav {
     flex-wrap: wrap;
+    gap: 14px;
   }
-  .App-header nav {
-    flex-direction: column;
+}
+
+@media (max-width: 640px) {
+  .header-brand-row {
+    margin-bottom: 0;
     gap: 10px;
+  }
+  .header-controls select,
+  .header-controls .tour-nav-btn {
+    display: none;
+  }
+  .mobile-menu-toggle {
+    display: inline-flex;
+  }
+  .App-header nav.desktop-nav {
+    display: none;
+  }
+  .mobile-nav-panel.is-open {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-subtle);
+    animation: mobileMenuSlideDown 0.2s ease-out;
+  }
+  .mobile-nav-links {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .mobile-nav-links a {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    color: var(--header-link);
+    text-decoration: none;
+    background: var(--primary-tint);
+  }
+  .mobile-nav-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .mobile-nav-controls select,
+  .mobile-theme-toggle {
+    min-height: 44px;
+    font-size: 16px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text);
   }
   main {
-    margin: 20px auto;
-    padding: 10px;
+    margin: 12px auto;
+    padding: 12px;
+  }
+  .remittance-form,
+  .invoice-viewer,
+  .feature-card {
+    padding: 16px;
+  }
+  .tx-filters input,
+  .tx-filters select {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+}
+
+@keyframes mobileMenuSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .App,
+  .App-header,
+  .remittance-form,
+  .invoice-viewer,
+  .tour-nav-btn,
+  button,
+  .mobile-nav-panel.is-open {
+    transition: none;
+    animation: none;
   }
 }
 

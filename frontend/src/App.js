@@ -1,6 +1,6 @@
 // #105 ErrorBoundary  #112 TransactionHistory route  #116 nav landmarks  #286 Onboarding
-import React, { useState, useEffect, createContext } from "react";
-import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
+import React, { useState, useEffect, useRef, createContext } from "react";
+import { BrowserRouter as Router, Routes, Route, Link, useLocation } from "react-router-dom";
 import RemittanceForm from "./components/RemittanceForm";
 import PaymentTemplates from "./components/PaymentTemplates";
 import RecurringSchedules from "./components/RecurringSchedules";
@@ -120,10 +120,77 @@ function App() {
     t[key] = currentTranslations[key] || translations.en[key] || key;
   });
 
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const mobileMenuBtnRef = useRef(null);
+
   return (
     <I18nContext.Provider value={{ lang, setLang, t }}>
       <WalletProvider>
         <Router>
+          <AppShell
+            darkMode={darkMode}
+            toggleDarkMode={toggleDarkMode}
+            themeAnnouncement={themeAnnouncement}
+            lang={lang}
+            setLang={setLang}
+            t={t}
+            showOnboarding={showOnboarding}
+            setShowOnboarding={setShowOnboarding}
+            mobileMenuOpen={mobileMenuOpen}
+            setMobileMenuOpen={setMobileMenuOpen}
+            mobileMenuBtnRef={mobileMenuBtnRef}
+          />
+        </Router>
+      </WalletProvider>
+    </I18nContext.Provider>
+  );
+}
+
+function AppShell({
+  darkMode,
+  toggleDarkMode,
+  themeAnnouncement,
+  lang,
+  setLang,
+  t,
+  showOnboarding,
+  setShowOnboarding,
+  mobileMenuOpen,
+  setMobileMenuOpen,
+  mobileMenuBtnRef,
+}) {
+  const location = useLocation();
+
+  // Close mobile navigation on route change (#456)
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname, setMobileMenuOpen]);
+
+  // Close mobile navigation on Escape and return focus to toggle button (#456)
+  useEffect(() => {
+    if (!mobileMenuOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setMobileMenuOpen(false);
+        if (mobileMenuBtnRef.current) {
+          mobileMenuBtnRef.current.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [mobileMenuOpen, setMobileMenuOpen, mobileMenuBtnRef]);
+
+  const navLinks = [
+    { to: "/", label: t.send },
+    { to: "/templates", label: t.templates },
+    { to: "/recurring", label: t.recurring },
+    { to: "/wallet", label: t.wallet },
+    { to: "/invoices", label: t.invoices },
+    { to: "/transactions", label: t.history },
+  ];
+
+  return (
           <div className={`App ${darkMode ? "dark-mode dark" : ""}`} data-theme={darkMode ? "dark" : "light"}>
             {/* #291: a11y Skip link */}
             <a href="#main-content" className="skip-link">
@@ -163,17 +230,77 @@ function App() {
                   >
                     {t.tour}
                   </button>
+                  <button
+                    ref={mobileMenuBtnRef}
+                    type="button"
+                    className="mobile-menu-toggle"
+                    aria-expanded={mobileMenuOpen}
+                    aria-controls="mobile-nav-menu"
+                    aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+                    onClick={() => setMobileMenuOpen((prev) => !prev)}
+                  >
+                    {mobileMenuOpen ? "✕" : "☰"}
+                  </button>
                 </div>
               </div>
               {/* #116 — nav landmark so screen readers can jump straight to navigation */}
-              <nav aria-label="Main navigation">
-                <Link to="/">{t.send}</Link>
-                <Link to="/templates">{t.templates}</Link>
-                <Link to="/recurring">{t.recurring}</Link>
-                <Link to="/wallet">{t.wallet}</Link>
-                <Link to="/invoices">{t.invoices}</Link>
-                <Link to="/transactions">{t.history}</Link>
+              <nav className="desktop-nav" aria-label="Main navigation">
+                {navLinks.map((item) => (
+                  <Link key={item.to} to={item.to}>{item.label}</Link>
+                ))}
               </nav>
+
+              {/* #456 — Mobile disclosure navigation menu */}
+              <div
+                id="mobile-nav-menu"
+                className={`mobile-nav-panel${mobileMenuOpen ? " is-open" : ""}`}
+                hidden={!mobileMenuOpen}
+              >
+                <nav className="mobile-nav-links" aria-label="Mobile navigation">
+                  {navLinks.map((item) => (
+                    <Link
+                      key={item.to}
+                      to={item.to}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      {item.label}
+                    </Link>
+                  ))}
+                </nav>
+                <div className="mobile-nav-controls">
+                  <label htmlFor="mobile-lang-select" className="sr-only">Select Language</label>
+                  <select
+                    id="mobile-lang-select"
+                    value={lang}
+                    onChange={(e) => setLang(e.target.value)}
+                    aria-label="Mobile language selector"
+                  >
+                    <option value="en">EN</option>
+                    <option value="es">ES</option>
+                    <option value="pt">PT</option>
+                    <option value="fr">FR</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={toggleDarkMode}
+                    aria-pressed={darkMode}
+                    aria-label={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+                    className="mobile-theme-toggle"
+                  >
+                    {darkMode ? "☀️ Light" : "🌙 Dark"}
+                  </button>
+                  <button
+                    type="button"
+                    className="tour-nav-btn"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setShowOnboarding(true);
+                    }}
+                  >
+                    {t.tour}
+                  </button>
+                </div>
+              </div>
             </header>
 
             {/* #286 — Interactive Multi-Step User Onboarding Tour */}
@@ -198,9 +325,6 @@ function App() {
               </main>
             </ErrorBoundary>
           </div>
-        </Router>
-      </WalletProvider>
-    </I18nContext.Provider>
   );
 }
 
