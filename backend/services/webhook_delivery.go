@@ -246,6 +246,7 @@ func (s *WebhookDeliveryService) deliver(webhook *models.Webhook, delivery *mode
 			delivery.NextRetryAt = nil
 			s.db.Save(delivery)
 			webhookDeliverySuccessCount.Add(1)
+			metrics.WebhookDeliveriesTotal.WithLabelValues("success").Inc()
 			if isRetry {
 				metrics.WebhookRetryAttemptsTotal.WithLabelValues(kind, "success").Inc()
 			}
@@ -259,6 +260,7 @@ func (s *WebhookDeliveryService) deliver(webhook *models.Webhook, delivery *mode
 		if isRetry {
 			metrics.WebhookRetryAttemptsTotal.WithLabelValues(kind, "failure").Inc()
 		}
+		metrics.WebhookDeliveriesTotal.WithLabelValues("failure").Inc()
 
 		// Classify error type for appropriate retry handling
 		errorType := classifyError(err, responseCode)
