@@ -192,6 +192,8 @@ function PaymentTemplates() {
             name="recipient_account"
             value={formData.recipient_account}
             onChange={handleChange}
+            autoComplete="off"
+            spellCheck={false}
             placeholder="G..."
           />
         </div>
@@ -202,6 +204,7 @@ function PaymentTemplates() {
               id="tpl_amount"
               name="amount"
               type="number"
+              inputMode="decimal"
               step="any"
               value={formData.amount}
               onChange={handleChange}

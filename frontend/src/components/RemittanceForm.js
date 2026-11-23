@@ -147,7 +147,7 @@ function RemittanceForm() {
       <h2 id="remittance-heading">Send Remittance</h2>
 
       {!isOnline && (
-        <div role="alert" className="offline-warning" style={{ background: "#ffebee", color: "#c62828", padding: "10px", borderRadius: "6px", marginBottom: "16px" }}>
+        <div role="alert" className="offline-warning alert-error">
           ⚠️ You are currently offline. Please check your connection.
         </div>
       )}
@@ -158,6 +158,7 @@ function RemittanceForm() {
           <input
             id="sender_id"
             type="number"
+            inputMode="numeric"
             name="sender_id"
             value={formData.sender_id}
             onChange={handleChange}
@@ -174,6 +175,7 @@ function RemittanceForm() {
           <input
             id="recipient_id"
             type="number"
+            inputMode="numeric"
             name="recipient_id"
             value={formData.recipient_id}
             onChange={handleChange}
@@ -223,6 +225,7 @@ function RemittanceForm() {
           <input
             id="amount"
             type="number"
+            inputMode="decimal"
             name="amount"
             value={formData.amount}
             onChange={handleChange}

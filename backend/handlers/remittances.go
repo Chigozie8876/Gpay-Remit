@@ -134,6 +134,7 @@ type CreateRemittanceRequest struct {
 	AssetIssuer      string                 `json:"asset_issuer"`
 	Conditions       map[string]interface{} `json:"conditions"`
 	Notes            string                 `json:"notes"`
+	Tags             []string               `json:"tags"`
 }
 
 type BatchPaymentItem struct {
@@ -166,12 +167,13 @@ type BatchPaymentResult struct {
 }
 
 type SendRemittanceRequest struct {
-	SenderID       uint   `json:"sender_id" binding:"required"`
-	RecipientID    uint   `json:"recipient_id" binding:"required"`
-	Amount         int64  `json:"amount" binding:"required,gt=0"`
-	Currency       string `json:"currency" binding:"required"`
-	TargetCurrency string `json:"target_currency"`
-	Notes          string `json:"notes"`
+	SenderID       uint     `json:"sender_id" binding:"required"`
+	RecipientID    uint     `json:"recipient_id" binding:"required"`
+	Amount         int64    `json:"amount" binding:"required,gt=0"`
+	Currency       string   `json:"currency" binding:"required"`
+	TargetCurrency string   `json:"target_currency"`
+	Notes          string   `json:"notes"`
+	Tags           []string `json:"tags"`
 }
 
 func (h *RemittanceHandler) SendRemittance(c *gin.Context) {
@@ -179,6 +181,19 @@ func (h *RemittanceHandler) SendRemittance(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(errors.NewValidationError("Invalid request body", err.Error()))
 		return
+	}
+
+	normalizedTags, err := models.NormalizeAndValidateTags(req.Tags)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	ownerID := req.SenderID
+	if uid, exists := c.Get("userID"); exists {
+		if id, ok := uid.(uint); ok && id > 0 {
+			ownerID = id
+		}
 	}
 
 	feeBreakdown := h.fees.Calculate(req.Amount)
@@ -195,12 +210,28 @@ func (h *RemittanceHandler) SendRemittance(c *gin.Context) {
 		ComplianceFee:  feeBreakdown.ComplianceFee,
 		NetworkFee:     feeBreakdown.NetworkFee,
 		Notes:          req.Notes,
+		Tags:           []string{},
 	}
 
-	if err := h.db.Create(&payment).Error; err != nil {
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&payment).Error; err != nil {
+			return err
+		}
+		for _, tag := range normalizedTags {
+			if err := tx.Create(&models.PaymentTag{
+				PaymentID: payment.ID,
+				UserID:    ownerID,
+				Tag:       tag,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		c.Error(errors.NewInternalError("Failed to create payment", err))
 		return
 	}
+	payment.Tags = normalizedTags
 
 	// Set response for idempotency caching
 	middleware.SetIdempotencyResponse(c, payment)
@@ -239,6 +270,12 @@ func (h *RemittanceHandler) CreateRemittance(c *gin.Context) {
 	// In a real app, we'd lookup or create the recipient user.
 	// For now, we'll just set RecipientID to 0 if not found, or use a placeholder.
 
+	normalizedTags, tagErr := models.NormalizeAndValidateTags(req.Tags)
+	if tagErr != nil {
+		c.Error(tagErr)
+		return
+	}
+
 	params := services.RemittanceCreateParams{
 		SenderID:         userID.(uint),
 		SenderAccount:    req.SenderAccount,
@@ -247,6 +284,7 @@ func (h *RemittanceHandler) CreateRemittance(c *gin.Context) {
 		AssetCode:        req.AssetCode,
 		Conditions:       req.Conditions,
 		Notes:            req.Notes,
+		Tags:             normalizedTags,
 	}
 
 	var payment *models.Payment
@@ -472,6 +510,19 @@ func (h *RemittanceHandler) GetRemittance(c *gin.Context) {
 		return
 	}
 
+	var uidPtr *uint
+	if uid, exists := c.Get("userID"); exists {
+		if u, ok := uid.(uint); ok {
+			uidPtr = &u
+		}
+	}
+	paymentsSlice := []models.Payment{payment}
+	if err := populatePaymentTags(preferredReadDB(h.db, h.readDB), paymentsSlice, uidPtr); err != nil {
+		c.Error(errors.NewInternalError("Failed to fetch payment tags", err))
+		return
+	}
+	payment = paymentsSlice[0]
+
 	c.JSON(http.StatusOK, payment)
 }
 
@@ -488,6 +539,41 @@ type ListRemittancesResponse struct {
 
 func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
 	var payments []models.Payment
+
+	rawTags := c.QueryArray("tag")
+	var filterTags []string
+	if len(rawTags) > 0 {
+		var tagErr error
+		filterTags, tagErr = models.NormalizeAndValidateTags(rawTags)
+		if tagErr != nil {
+			c.Error(tagErr)
+			return
+		}
+	}
+
+	var uidPtr *uint
+	if uid, exists := c.Get("userID"); exists {
+		if u, ok := uid.(uint); ok && u > 0 {
+			uidPtr = &u
+		}
+	}
+	if len(filterTags) > 0 && uidPtr == nil {
+		c.Error(errors.NewUnauthorizedError("Unauthorized"))
+		return
+	}
+
+	applyTagAndUserFilter := func(q *gorm.DB) *gorm.DB {
+		if uidPtr != nil {
+			q = q.Where("sender_id = ? OR recipient_id = ?", *uidPtr, *uidPtr)
+		}
+		if len(filterTags) > 0 && uidPtr != nil {
+			q = q.Where(
+				"id IN (SELECT payment_id FROM payment_tags WHERE user_id = ? AND tag IN ? GROUP BY payment_id HAVING COUNT(DISTINCT tag) = ?)",
+				*uidPtr, filterTags, len(filterTags),
+			)
+		}
+		return q
+	}
 
 	// Support both cursor-based and legacy offset-based pagination
 	cursor := c.Query("cursor")
@@ -509,7 +595,8 @@ func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
 			return
 		}
 
-		query := preferredReadDB(h.db, h.readDB).Model(&models.Payment{}).Order("created_at DESC, id DESC")
+		readDB := preferredReadDB(h.db, h.readDB)
+		query := applyTagAndUserFilter(readDB.Model(&models.Payment{})).Order("created_at DESC, id DESC")
 
 		// Apply cursor filtering: WHERE created_at < cursor.CreatedAt OR (created_at = cursor.CreatedAt AND id < cursor.ID)
 		if !decodedCursor.CreatedAt.IsZero() {
@@ -534,6 +621,11 @@ func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
 			})
 		}
 
+		if err := populatePaymentTags(readDB, payments, uidPtr); err != nil {
+			c.Error(errors.NewInternalError("Failed to fetch payment tags", err))
+			return
+		}
+
 		response := ListRemittancesResponse{
 			Data:       payments,
 			NextCursor: nextCursor,
@@ -556,8 +648,12 @@ func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
 		pageSize = 20
 	}
 
-	// Cache key based on query params
-	cacheKey := fmt.Sprintf("payments:list:%d:%d", page, pageSize)
+	// Cache key based on query params (only cache untagged, unscoped legacy requests)
+	uidKey := uint(0)
+	if uidPtr != nil {
+		uidKey = *uidPtr
+	}
+	cacheKey := fmt.Sprintf("payments:list:%d:%d:%d:%s", uidKey, page, pageSize, strings.Join(filterTags, ","))
 
 	// Try cache
 	if found, _ := utils.GetCached(cacheKey, &payments); found {
@@ -574,10 +670,10 @@ func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
 	// Count total records for metadata
 	var totalCount int64
 	readDB := preferredReadDB(h.db, h.readDB)
-	readDB.Model(&models.Payment{}).Count(&totalCount)
+	applyTagAndUserFilter(readDB.Model(&models.Payment{})).Count(&totalCount)
 
 	// DB query with pagination - check for pagination error from MaxPage validation
-	if err := readDB.Scopes(Paginate(c)).Order("created_at DESC").Find(&payments).Error; err != nil {
+	if err := applyTagAndUserFilter(readDB.Model(&models.Payment{})).Scopes(Paginate(c)).Order("created_at DESC").Find(&payments).Error; err != nil {
 		c.Error(errors.NewInternalError("Failed to fetch payments", err))
 		return
 	}
@@ -585,6 +681,11 @@ func (h *RemittanceHandler) ListRemittances(c *gin.Context) {
 	// Check if MaxPage validation failed
 	if paginationErr, exists := c.Get("pagination_error"); exists {
 		c.Error(paginationErr.(error))
+		return
+	}
+
+	if err := populatePaymentTags(readDB, payments, uidPtr); err != nil {
+		c.Error(errors.NewInternalError("Failed to fetch payment tags", err))
 		return
 	}
 

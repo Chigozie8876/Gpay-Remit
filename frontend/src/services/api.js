@@ -105,8 +105,34 @@ api.interceptors.response.use(
 
 export const sendRemittance = (data, config = {}) => api.post("/remittances", data, config);
 export const getRemittance = (id, config = {}) => api.get(`/remittances/${id}`, config);
-export const getRemittances = (page = 1, pageSize = 20, config = {}) =>
-  api.get(`/remittances?page=${page}&page_size=${pageSize}`, config);
+export const getRemittances = (page = 1, pageSize = 20, config = {}, tags = []) => {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  if (Array.isArray(tags)) {
+    tags.forEach((t) => {
+      if (t) params.append("tag", t);
+    });
+  }
+  return api.get(`/remittances?${params.toString()}`, config);
+};
+
+export const updateRemittanceTags = (id, tags, config = {}) =>
+  api.put(`/remittances/${id}/tags`, { tags }, config);
+
+export const getTagSummary = (params = {}, config = {}) => {
+  const searchParams = new URLSearchParams();
+  if (params.from) searchParams.set("from", params.from);
+  if (params.to) searchParams.set("to", params.to);
+  const qs = searchParams.toString();
+  return api.get(`/remittances/tags/summary${qs ? `?${qs}` : ""}`, config);
+};
+
+export const autocompleteTags = (q, limit = 10, config = {}) => {
+  const params = new URLSearchParams({ q: String(q || ""), limit: String(limit) });
+  return api.get(`/remittances/tags/autocomplete?${params.toString()}`, config);
+};
 
 export const createInvoice = (data, config = {}) => api.post("/invoices", data, config);
 export const getInvoice = (id, config = {}) => api.get(`/invoices/${id}`, config);
